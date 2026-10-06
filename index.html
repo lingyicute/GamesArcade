@@ -664,9 +664,9 @@
     .speed-line { position: absolute; height: 2px; border-radius: 2px; background: rgba(255,255,255,.75); transform: rotate(-9deg); }
     .speed-line.one { top: 59px; left: 14%; width: 43px; }
     .speed-line.two { top: 91px; left: 24%; width: 26px; opacity: .65; }
-    .penguin-main { position: absolute; z-index: 3; top: 42px; left: 42%; font-size: 42px; filter: drop-shadow(0 8px 8px rgba(39,63,112,.18)); transform: rotate(-8deg); animation: penguin-bob 1.6s ease-in-out infinite alternate; }
+    .penguin-main { position: absolute; z-index: 3; top: 38px; left: 40%; display: block; width: 47px; height: auto; filter: drop-shadow(0 8px 8px rgba(39,63,112,.18)); transform: rotate(-8deg); animation: penguin-bob 1.6s ease-in-out infinite alternate; }
     @keyframes penguin-bob { to { transform: translateY(-5px) rotate(1deg); } }
-    .penguin-small { position: absolute; z-index: 2; top: 72px; left: 66%; font-size: 24px; opacity: .56; transform: rotate(12deg); }
+    .penguin-small { position: absolute; z-index: 2; top: 76px; left: 66%; display: block; width: 27px; height: auto; opacity: .56; transform: rotate(12deg); }
     .go-badge { position: absolute; top: 26px; right: 22%; padding: 5px 10px; border: 1px solid rgba(255,255,255,.4); border-radius: 999px; color: #faffff; background: rgba(68,144,190,.24); font-family: var(--page-font); font-size: 9px; font-weight: 900; letter-spacing: .12em; }
 
     /* Standalone creator card at the end of the collection */
@@ -994,7 +994,7 @@
             <a class="game-card" data-kind="classic" data-game="penguins" href="https://tp.92li.uk" target="_blank" rel="noopener noreferrer" aria-label="打开 Turbocharged Penguins">
               <div class="game-preview">
                 <span class="preview-name">TURBOCHARGED PENGUINS</span><span class="preview-spark" aria-hidden="true">✦</span>
-                <div class="penguin-scene" aria-hidden="true"><span class="ice-track"></span><span class="speed-line one"></span><span class="speed-line two"></span><span class="penguin-main">🐧</span><span class="penguin-small">🐧</span><span class="go-badge">GO!</span></div>
+                <div class="penguin-scene" aria-hidden="true"><span class="ice-track"></span><span class="speed-line one"></span><span class="speed-line two"></span><img class="penguin-main" src="./assets/penguin.png" alt=""><img class="penguin-small" src="./assets/penguin.png" alt=""><span class="go-badge">GO!</span></div>
               </div>
               <div class="game-info">
                 <div class="game-meta"><span>09 / CLASSIC REMAKE</span><span class="launch-dot" aria-hidden="true">↗</span></div>
