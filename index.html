@@ -97,8 +97,8 @@
       -webkit-appearance: none;
       color: var(--ink);
       background: rgba(20, 31, 77, .46);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(32px);
+      -webkit-backdrop-filter: blur(32px);
       opacity: 1;
       visibility: visible;
       cursor: progress;
@@ -439,7 +439,7 @@
       font-weight: 800;
     }
     .filter-count { margin-left: 4px; opacity: .7; font-size: 9px; }
-    .game-group + .game-group { margin-top: 43px; padding-top: 34px; border-top: 1px solid rgba(255,255,255,.14); }
+    .game-group:not([hidden]) + .game-group { margin-top: 43px; padding-top: 34px; border-top: 1px solid rgba(255,255,255,.14); }
     .group-heading {
       display: flex;
       align-items: center;
@@ -759,7 +759,7 @@
       .collection-lede { max-width: 33ch; font-size: 11px; }
       .filters { gap: 3px; max-width: 100%; padding: 4px; }
       .filter-button { min-height: 34px; padding-inline: 10px; font-size: 10px; }
-      .game-group + .game-group { margin-top: 33px; padding-top: 26px; }
+      .game-group:not([hidden]) + .game-group { margin-top: 33px; padding-top: 26px; }
       .group-heading { gap: 10px; margin-bottom: 14px; }
       .group-number { width: 33px; height: 33px; border-radius: 11px; font-size: 9px; }
       .group-heading h3 { font-size: 19px; }
