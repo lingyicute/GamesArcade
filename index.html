@@ -97,8 +97,8 @@
       -webkit-appearance: none;
       color: var(--ink);
       background: rgba(20, 31, 77, .46);
-      backdrop-filter: blur(7px);
-      -webkit-backdrop-filter: blur(7px);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       opacity: 1;
       visibility: visible;
       cursor: progress;
@@ -1131,7 +1131,15 @@
         ? Promise.resolve()
         : new Promise((resolve) => window.addEventListener("load", resolve, { once: true }));
 
-      Promise.all([fontsReady, imagesReady, audioReady, pageLoadReady]).then(async () => {
+      // Watchdog: if a resource stalls without ever firing load/error (a hung request),
+      // Promise.all would never settle and the overlay would lock the page forever.
+      // After 10 s, unlock anyway - playback failures are already handled gracefully.
+      const resourcesOrTimeout = Promise.race([
+        Promise.all([fontsReady, imagesReady, audioReady, pageLoadReady]),
+        new Promise((resolve) => setTimeout(resolve, 10000))
+      ]);
+
+      resourcesOrTimeout.then(async () => {
         const remaining = minimumSpinnerMs - (performance.now() - loadingStartedAt);
         if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
         resourcesReady = true;
@@ -1243,13 +1251,6 @@ function catmull(pts, t) {   // pts: [[t,x,y],...]
   const f = (a, b, c, d) => 0.5 * ((2 * b) + (-a + c) * u + (2 * a - 5 * b + 4 * c - d) * u2 + (-a + 3 * b - 3 * c + d) * u3);
   return [f(p0[1], p1[1], p2[1], p3[1]), f(p0[2], p1[2], p2[2], p3[2])];
 }
-function interp(keys, t) {   // keys [[t,v]]
-  if (t <= keys[0][0]) return keys[0][1];
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (t <= keys[i + 1][0]) { const u = (t - keys[i][0]) / (keys[i + 1][0] - keys[i][0]); const s = u * u * (3 - 2 * u); return lerp(keys[i][1], keys[i + 1][1], s); }
-  }
-  return keys[keys.length - 1][1];
-}
 function hash(n) { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
 
 /* ---------- sky ---------- */
@@ -1320,22 +1321,6 @@ function sprite(key, bx, by, bw, bh, fn) {
 }
 
 /* ---------- stars ---------- */
-function star4(ctx, x, y, R, rot, fill, glow) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot || 0);
-  ctx.beginPath();
-  const k = 0.2;
-  for (let i = 0; i < 4; i++) {
-    const a = i * Math.PI / 2;
-    const ax = Math.cos(a) * R, ay = Math.sin(a) * R;
-    const bx = Math.cos(a + Math.PI / 4) * R * k * 1.6, by = Math.sin(a + Math.PI / 4) * R * k * 1.6;
-    if (i === 0) ctx.moveTo(ax, ay); else ctx.lineTo(ax, ay);
-    ctx.lineTo(bx, by);
-  }
-  ctx.closePath();
-  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = R * 0.5; }
-  ctx.fillStyle = fill; ctx.fill();
-  ctx.restore();
-}
 function star5(ctx, x, y, R, rot, alpha) {
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
   ctx.globalAlpha *= alpha;
@@ -1413,18 +1398,10 @@ function drawShooting(ctx, f) {
   ctx.restore();
 }
 
-/* ---------- logo ---------- */
-function thick(ctx, pathFn, w, fill, outline, ow) {
-  ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  pathFn();
-  if (outline) { ctx.lineWidth = w + ow; ctx.strokeStyle = outline; ctx.stroke(); }
-  ctx.lineWidth = w; ctx.strokeStyle = fill; ctx.stroke();
-  ctx.restore();
-}
 /* ---------- mouse ---------- */
 const MPATH = [[28, -90, 620], [33, 10, 535], [36, 157, 375], [40, 314, 257], [44, 437, 186], [48, 629, 128],
   [52, 714, 129], [56, 880, 110], [60, 975, 125], [65, 1100, 138], [70, 1240, 172], [75, 1420, 262], [80, 1608, 380], [85, 1770, 505], [91, 1990, 660]];
-function drawMouse(ctx, p, t, glowK) {
+function drawMouse(ctx, p, t) {
   if (p < 28 || p > 91) return;
   const pos = catmull(MPATH, p);
   const q = catmull(MPATH, Math.min(p + 0.6, 91));
@@ -1785,8 +1762,7 @@ function draw(ctx, t, view) {
   drawStarsStatic(ctx, t);
   drawShooting(ctx, f);
 
-  const glowK = sstep(40, 46, p) * (1 - sstep(48, 58, p));
-  drawMouse(ctx, p, t, glowK);
+  drawMouse(ctx, p, t);
   // mouse hiding behind the logo glows through
   if (p > 41 && p < 47.5) {
     const mp = catmull(MPATH, p);
@@ -1796,9 +1772,8 @@ function draw(ctx, t, view) {
   }
 
   // blinks
-  const bl = (c, w) => { const m = ((f - c) % 120 + 120) % 120; return m < w; };
   const moonBlink = (((f - 9) % 201 + 201) % 201) < 6 || (((f - 190) % 201 + 201) % 201) < 5;
-  const bunnyBlink = (((f - 172) % 201 + 201) % 201) < 7 || (((f - 96) % 201 + 201) % 201) < 0;
+  const bunnyBlink = (((f - 172) % 201 + 201) % 201) < 7;
   const chickBlink = (((f - 120) % 201 + 201) % 201) < 5;
   const pandaBlink = false, purpleBlink = bunnyBlink;
 
@@ -1814,9 +1789,13 @@ function draw(ctx, t, view) {
   const crot = air ? 0.12 * Math.sin(t * 9) : 0.03 * Math.sin(t * 2.2);
   drawChick(ctx, t, cp[0], cp[1], crot, chickBlink, air ? sstep(38, 42, p) * (1 - sstep(52, 55, p)) : 0);
 
-  const look = [-3 * (1 - e), -5 * (1 - e)];
   const ex = e > 0.5 ? 1 : 0, bb = bunnyBlink && e < 0.1 ? 1 : 0;
-  const PH = TAU / 24, tq = Math.round((t * 2.2) / PH) * PH / 2.2;     // quantised ear sway phase
+  const PH = TAU / 24;
+  // Quantised ear sway phase. The sway is sin(t*2.2), periodic with period TAU, so only
+  // 24 distinct states exist - wrap the phase index so sprite cache keys repeat instead
+  // of growing forever (the unbounded key used to leak two large canvases every ~119 ms).
+  const earPhase = ((Math.round((t * 2.2) / PH) % 24) + 24) % 24;
+  const tq = earPhase * PH / 2.2;
   const lk = e > 0.5 ? 0 : 1;
   const put = (key, box, anc, i, bobv, raw) => {
     const c = sprite(key, box[0], box[1], box[2], box[3], raw);
@@ -1828,8 +1807,8 @@ function draw(ctx, t, view) {
   };
   put('pink', [390, 380, 280, 300], [520, 628], 0, bob(0), x => drawPink(x, 0, 0, 0));
   put('bear', [570, 320, 270, 300], [700, 585], 1, bob(1), x => drawBear(x, 0, 1, 0));
-  put('bl' + ex + bb + lk + '_' + Math.round(tq * 1000), [735, 235, 280, 350], [870, 552], 2, bob(2), x => drawBunnyL(x, tq, 2, 0, ex, bb, [-3 * lk, -5 * lk]));
-  put('br' + ex + bb + lk + '_' + Math.round(tq * 1000), [925, 235, 260, 350], [1050, 552], 3, bob(3), x => drawBunnyR(x, tq, 3, 0, ex, bb, [-3 * lk, -5 * lk]));
+  put('bl' + ex + bb + lk + '_' + earPhase, [735, 235, 280, 350], [870, 552], 2, bob(2), x => drawBunnyL(x, tq, 2, 0, ex, bb, [-3 * lk, -5 * lk]));
+  put('br' + ex + bb + lk + '_' + earPhase, [925, 235, 260, 350], [1050, 552], 3, bob(3), x => drawBunnyR(x, tq, 3, 0, ex, bb, [-3 * lk, -5 * lk]));
   put('panda', [1110, 320, 270, 290], [1225, 575], 4, bob(4), x => drawPanda(x, 0, 4, 0));
   put('pur' + ex + (purpleBlink && e < 0.1 ? 1 : 0), [1235, 410, 230, 250], [1325, 618], 5, bob(5), x => drawPurple(x, 0, 5, 0, ex, purpleBlink && e < 0.1));
 
