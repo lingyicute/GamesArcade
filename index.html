@@ -478,8 +478,9 @@
       white-space: nowrap;
     }
     .game-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .game-grid:not(.classic-grid) { display: flex; flex-wrap: wrap; justify-content: center; }
+    .game-grid:not(.classic-grid) .game-card { flex: 0 0 calc((100% - 32px) / 3); }
     .classic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .game-grid:not(.classic-grid) .game-card:last-child { grid-column: 2; }
     .game-card {
       --accent: #ffe28a;
       --accent-rgb: 255, 226, 138;
@@ -572,6 +573,7 @@
     .game-card[data-game="sudoku"] { --accent:#bce9ff; --accent-rgb:188,233,255; }
     .game-card[data-game="pop"] { --accent:#d7b3ff; --accent-rgb:215,179,255; }
     .game-card[data-game="tetris"] { --accent:#9edbff; --accent-rgb:158,219,255; }
+    .game-card[data-game="gomoku"] { --accent:#c9adff; --accent-rgb:201,173,255; }
     .game-card[data-game="flappy"] { --accent:#ffe185; --accent-rgb:255,225,133; }
     .game-card[data-game="penguins"] { --accent:#a9e8ff; --accent-rgb:169,232,255; }
 
@@ -644,6 +646,13 @@
     .tetris-board .coral { background: #ff9c98; }
     .tetris-board .yellow { background: #f5ce69; }
     .tetris-board .lime { background: #9ddb7d; }
+    .gomoku-board { position: relative; z-index: 2; display: grid; width: 116px; height: 116px; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-template-rows: repeat(7, minmax(0, 1fr)); gap: 3px; padding: 7px; border: 1px solid rgba(255,255,255,.55); border-radius: 16px; background: rgba(74,59,111,.46); box-shadow: 0 9px 14px rgba(24,22,67,.2); transform: rotate(3deg); }
+    .gomoku-board span { position: relative; display: grid; min-width: 0; min-height: 0; place-items: center; border-radius: 4px; background: rgba(255,255,255,.48); box-shadow: inset 0 1px 0 rgba(255,255,255,.26); }
+    .gomoku-board span::after { width: 10px; height: 10px; content: ""; border-radius: 50%; opacity: 0; transform: scale(.4); }
+    .gomoku-board .black::after { background: radial-gradient(circle at 32% 28%, #5a5075 0%, #251f3a 60%, #151123 100%); box-shadow: 0 2px 4px rgba(9,7,24,.3); opacity: 1; transform: scale(1); }
+    .gomoku-board .white::after { border: 1px solid rgba(84,72,118,.15); background: radial-gradient(circle at 32% 28%, #fff 0%, #f2edff 60%, #d9d1ed 100%); box-shadow: 0 2px 4px rgba(19,13,45,.22); opacity: 1; transform: scale(1); }
+    .gomoku-board .win { background: rgba(255,235,157,.82); box-shadow: inset 0 0 0 1px rgba(255,221,102,.65); }
+    .gomoku-board .last::before { position: absolute; z-index: 1; width: 3px; height: 3px; content: ""; border: 1px solid rgba(255,255,255,.9); border-radius: 50%; background: #8e6bea; }
     .flappy-scene { position: absolute; z-index: 1; inset: 0; overflow: hidden; background: linear-gradient(180deg, rgba(117,188,241,.28), rgba(255,230,157,.28)); }
     .flappy-scene .cloud { position: absolute; top: 40px; left: 19%; width: 57px; height: 17px; border-radius: 30px; background: rgba(255,255,255,.56); }
     .flappy-scene .cloud::before, .flappy-scene .cloud::after { position: absolute; bottom: 3px; content: ""; border-radius: 50%; background: inherit; }
@@ -729,8 +738,8 @@
       .collection-top { align-items: flex-start; flex-direction: column; gap: 18px; }
       .filters { align-self: flex-start; }
       .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .game-grid:not(.classic-grid) .game-card { flex-basis: calc((100% - 16px) / 2); }
       .classic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .game-grid:not(.classic-grid) .game-card:last-child { grid-column: 1 / -1; width: calc((100% - 16px) / 2); justify-self: center; }
       .group-count { font-size: 8px; }
     }
     @media (max-width: 640px) {
@@ -766,7 +775,7 @@
       .group-heading p { max-width: 30ch; font-size: 9px; }
       .group-count { font-size: 7px; letter-spacing: .13em; }
       .game-grid, .classic-grid { grid-template-columns: 1fr; gap: 12px; }
-      .game-grid:not(.classic-grid) .game-card:last-child { grid-column: auto; width: auto; justify-self: stretch; }
+      .game-grid:not(.classic-grid) .game-card { flex-basis: 100%; }
       .game-card { min-height: 338px; }
       .game-preview { height: 145px; }
       .game-info { padding: 16px 17px 15px; }
@@ -807,7 +816,7 @@
       <span class="brand-caption">个人游戏作品陈列室</span>
     </a>
     <nav class="site-nav" aria-label="主导航">
-      <a href="#games">星图<span class="nav-count">09</span></a>
+      <a href="#games">星图<span class="nav-count">10</span></a>
       <a href="#about">关于我</a>
     </nav>
     <button class="music-button" id="musicToggle" type="button" aria-pressed="false" aria-label="开启背景音乐" title="开启背景音乐">
@@ -824,7 +833,7 @@
       <div class="hero-copy">
         <p class="eyebrow">✦ A LITTLE ARCADE OF MY GAMES ✦</p>
         <h1 class="zh" id="hero-title">来我的小宇宙<br><span class="gold">玩一会儿</span></h1>
-        <p class="hero-description">七款 <span class="accent">Material You</span> 小游戏，还有两款经典重制，<br class="desktop-break">均由我独立制作。</p>
+        <p class="hero-description">八款 <span class="accent">Material You</span> 小游戏，还有两款经典重制，<br class="desktop-break">均由我独立制作。</p>
         <div class="hero-actions">
           <a class="button button-primary" href="#games">探索全部游戏 <span class="button-arrow" aria-hidden="true">↓</span></a>
           <a class="button button-secondary" href="https://github.com/lingyicute" target="_blank" rel="noopener noreferrer">逛逛 GitHub <span class="button-arrow" aria-hidden="true">↗</span></a>
@@ -844,12 +853,12 @@
             <h2 class="collection-title zh" id="collection-title">想玩什么？<br><em>这些任你选</em></h2>
           </div>
           <div class="filters" role="group" aria-label="按游戏类型筛选">
-            <button class="filter-button" type="button" data-filter="all" aria-pressed="true">全部 <span class="filter-count">09</span></button>
-            <button class="filter-button" type="button" data-filter="material" aria-pressed="false">Material You <span class="filter-count">07</span></button>
+            <button class="filter-button" type="button" data-filter="all" aria-pressed="true">全部 <span class="filter-count">10</span></button>
+            <button class="filter-button" type="button" data-filter="material" aria-pressed="false">Material You <span class="filter-count">08</span></button>
             <button class="filter-button" type="button" data-filter="classic" aria-pressed="false">经典重制 <span class="filter-count">02</span></button>
           </div>
         </div>
-        <p class="filter-status" id="filterStatus" aria-live="polite">正在显示全部 9 款游戏。</p>
+        <p class="filter-status" id="filterStatus" aria-live="polite">正在显示全部 10 款游戏。</p>
 
         <section class="game-group" data-group="material" aria-labelledby="material-title">
           <div class="group-heading">
@@ -858,7 +867,7 @@
               <h3 id="material-title">Material You · 从零设计</h3>
               <p>清爽配色、柔和动效，把熟悉的玩法做得更轻盈。</p>
             </div>
-            <span class="group-count">7 GAMES · MADE BY LINGYICUTE</span>
+            <span class="group-count">8 GAMES · MADE BY LINGYICUTE</span>
           </div>
           <div class="game-grid">
             <a class="game-card" data-kind="material" data-game="match" href="https://match.92li.uk" target="_blank" rel="noopener noreferrer" aria-label="打开 YiMatches 连连看">
@@ -965,6 +974,28 @@
                 <div class="card-footer"><span class="game-product">YiTetris · tetris.92li.uk</span><span class="card-cta">PLAY NOW <span aria-hidden="true">→</span></span></div>
               </div>
             </a>
+
+            <a class="game-card" data-kind="material" data-game="gomoku" href="https://yimoku.92li.uk" target="_blank" rel="noopener noreferrer" aria-label="打开 YiMoku 五子棋">
+              <div class="game-preview">
+                <span class="preview-name">YI MOKU</span><span class="preview-spark" aria-hidden="true">✦</span>
+                <div class="gomoku-board" aria-hidden="true">
+                  <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                  <span></span><span class="black win"></span><span class="white"></span><span></span><span></span><span></span><span></span>
+                  <span></span><span class="white"></span><span class="black win"></span><span class="white"></span><span></span><span></span><span></span>
+                  <span></span><span></span><span class="white"></span><span class="black win"></span><span class="white"></span><span></span><span></span>
+                  <span></span><span></span><span></span><span class="white"></span><span class="black win"></span><span class="white"></span><span></span>
+                  <span></span><span></span><span></span><span></span><span class="white"></span><span class="black win last"></span><span></span>
+                  <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                </div>
+                <span class="mini-caption">FIVE IN A ROW · SMART AI</span>
+              </div>
+              <div class="game-info">
+                <div class="game-meta"><span>08 / STRATEGY BOARD</span><span class="launch-dot" aria-hidden="true">↗</span></div>
+                <h3>五子棋</h3>
+                <p>执黑或执白，与会读懂攻防威胁的 AI 对弈，率先连成五子。</p>
+                <div class="card-footer"><span class="game-product">YiMoku · yimoku.92li.uk</span><span class="card-cta">PLAY NOW <span aria-hidden="true">→</span></span></div>
+              </div>
+            </a>
           </div>
         </section>
 
@@ -984,7 +1015,7 @@
                 <div class="flappy-scene" aria-hidden="true"><span class="cloud"></span><img class="flappy-bird" src="./assets/bird-upflap.png" alt=""><span class="pipe top"></span><span class="pipe bottom"></span><span class="flappy-ground"></span></div>
               </div>
               <div class="game-info">
-                <div class="game-meta"><span>08 / CLASSIC REMAKE</span><span class="launch-dot" aria-hidden="true">↗</span></div>
+                <div class="game-meta"><span>09 / CLASSIC REMAKE</span><span class="launch-dot" aria-hidden="true">↗</span></div>
                 <h3>Flappy Bird</h3>
                 <p>轻点起飞，在一根根水管之间小心穿行。失败了吗？那就再来一次。</p>
                 <div class="card-footer"><span class="game-product">fb.92li.uk</span><span class="card-cta">PLAY NOW <span aria-hidden="true">→</span></span></div>
@@ -997,7 +1028,7 @@
                 <div class="penguin-scene" aria-hidden="true"><span class="ice-track"></span><span class="speed-line one"></span><span class="speed-line two"></span><img class="penguin-main" src="./assets/penguin.png" alt=""><img class="penguin-small" src="./assets/penguin.png" alt=""><span class="go-badge">GO!</span></div>
               </div>
               <div class="game-info">
-                <div class="game-meta"><span>09 / CLASSIC REMAKE</span><span class="launch-dot" aria-hidden="true">↗</span></div>
+                <div class="game-meta"><span>10 / CLASSIC REMAKE</span><span class="launch-dot" aria-hidden="true">↗</span></div>
                 <h3>Turbocharged Penguins</h3>
                 <p>经典 flash 游戏的完美网页重制，和三只企鹅老朋友重新出发！</p>
                 <div class="card-footer"><span class="game-product">tp.92li.uk</span><span class="card-cta">PLAY NOW <span aria-hidden="true">→</span></span></div>
