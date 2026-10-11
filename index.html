@@ -77,6 +77,8 @@
       height: 100vh;
       height: 100dvh;
       pointer-events: none;
+      will-change: transform;
+      transform: translateZ(0);
     }
     a { color: inherit; }
     button { font: inherit; }
@@ -439,6 +441,10 @@
       font-weight: 800;
     }
     .filter-count { margin-left: 4px; opacity: .7; font-size: 9px; }
+    .game-group {
+      content-visibility: auto;
+      contain-intrinsic-size: auto 500px;
+    }
     .game-group:not([hidden]) + .game-group { margin-top: 43px; padding-top: 34px; border-top: 1px solid rgba(255,255,255,.14); }
     .group-heading {
       display: flex;
@@ -1225,11 +1231,14 @@
       });
 
       cards.forEach((card) => {
+        let rect = null;
+        card.addEventListener("pointerenter", () => { rect = card.getBoundingClientRect(); }, { passive: true });
         card.addEventListener("pointermove", (event) => {
-          const rect = card.getBoundingClientRect();
+          if (!rect) rect = card.getBoundingClientRect();
           card.style.setProperty("--mx", `${event.clientX - rect.left}px`);
           card.style.setProperty("--my", `${event.clientY - rect.top}px`);
         }, { passive: true });
+        card.addEventListener("pointerleave", () => { rect = null; }, { passive: true });
       });
     })();
   </script>
@@ -1372,11 +1381,28 @@ function star5(ctx, x, y, R, rot, alpha) {
   ctx.fill();
   ctx.restore();
 }
+const DOT_SPRITES = {};
 function dot(ctx, x, y, r, a, col) {
+  const ir = Math.round(r * 2.2);
+  const color = col || '#fff';
+  const key = ir + '_' + color;
+  let spr = DOT_SPRITES[key];
+  if (!spr) {
+    const size = ir * 2 + 4;
+    spr = DOT_SPRITES[key] = mk(size, size);
+    const sx = spr.getContext('2d');
+    const cx = size / 2, cy = size / 2;
+    const g = sx.createRadialGradient(cx, cy, 0, cx, cy, ir);
+    g.addColorStop(0, color);
+    g.addColorStop(0.45, color);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    sx.fillStyle = g;
+    sx.beginPath(); sx.arc(cx, cy, ir, 0, TAU); sx.fill();
+  }
   ctx.save();
   ctx.globalAlpha = a;
-  ctx.fillStyle = rad(ctx, x, y, 0, r * 2.2, [[0, col || '#fff'], [0.45, col || '#fff'], [1, 'rgba(255,255,255,0)']]);
-  ctx.beginPath(); ctx.arc(x, y, r * 2.2, 0, TAU); ctx.fill();
+  const half = spr.width / 2;
+  ctx.drawImage(spr, x - half, y - half);
   ctx.restore();
 }
 // [x, y, radius, kind]  kind 0 = white dot, 1 = tiny dim dot
@@ -1894,15 +1920,27 @@ root.Scene = { draw, W, H, FPS, view: { x0: 0, y0: 0, x1: W, y1: H } };
   function schedule(){ if(pending) clearTimeout(pending); pending=setTimeout(function(){ pending=0; fit(); },120); }
   addEventListener('resize',schedule); addEventListener('orientationchange',schedule);
   fit();
-  var t0=performance.now();
+  var t0=performance.now(), running=true, rafId=null;
   function loop(now){
+    if (!running) return;
     ctx.setTransform(1,0,0,1,0,0);
     ctx.clearRect(0,0,cw,ch);
     ctx.setTransform(s,0,0,s,ox,oy);                 // stage units -> device pixels
     Scene.draw(ctx,(now-t0)/1000,Scene.view);
-    requestAnimationFrame(loop);
+    rafId = requestAnimationFrame(loop);
   }
-  requestAnimationFrame(loop);
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      running = false;
+      if (rafId) cancelAnimationFrame(rafId);
+    } else {
+      if (!running) {
+        running = true;
+        rafId = requestAnimationFrame(loop);
+      }
+    }
+  });
+  rafId = requestAnimationFrame(loop);
 })();
 </script>
 </body>
