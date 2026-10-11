@@ -67,6 +67,19 @@
         linear-gradient(180deg, rgba(14, 23, 58, .20) 0%, rgba(17, 29, 72, .02) 42%, rgba(11, 28, 65, .24) 100%),
         radial-gradient(ellipse at 50% 15%, rgba(119, 139, 232, .08), transparent 48%);
     }
+    /* Static night sky + moon: painted once per resize, never per frame. */
+    #bg {
+      position: fixed;
+      z-index: -3;
+      left: 0;
+      bottom: 0;
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      pointer-events: none;
+    }
+    /* Animated overlay: the only layer that repaints every frame. */
     #c {
       position: fixed;
       z-index: -2;
@@ -808,6 +821,7 @@
   </style>
 </head>
 <body class="is-loading">
+  <canvas id="bg" aria-hidden="true"></canvas>
   <canvas id="c" aria-hidden="true"></canvas>
 
   <button class="loading-overlay is-loading" id="loadingOverlay" type="button" disabled aria-live="polite" aria-label="正在载入页面资源">
@@ -1321,26 +1335,31 @@ const SKY_STOPS = [
 /* The sky is rasterised into one view-sized bitmap together with the moon, and reused until
    the viewport changes - much cheaper than filling the viewport with a gradient every frame. */
 const STAGE_VIEW = { x0: 0, y0: 0, x1: W, y1: H };
+/* Everything drawMoonBase() paints lives inside the moon disc (even its glows are
+   clipped to it) and nothing above y = H is reachable by the animation, so the sprite
+   is cropped to that box instead of rasterising the whole 1872x1044 stage - 3.5 MB
+   instead of 7.8 MB of backing store, and a smaller blit. */
+const MOON_BOX = { x: 250, y: 410, w: 1365, h: 634 };
 let moonCanvas = null;
 function moonSprite() {                 // the moon (and its glow), rasterised once
   if (moonCanvas) return moonCanvas;
-  const c = moonCanvas = mk(W, H);
-  drawMoonBase(c.getContext('2d'));
+  const c = moonCanvas = mk(MOON_BOX.w, MOON_BOX.h);
+  const x = c.getContext('2d');
+  x.translate(-MOON_BOX.x, -MOON_BOX.y);
+  drawMoonBase(x);
   return c;
 }
-let backdropCache = null;
-function backdrop(v) {
-  const key = v.x0 + ',' + v.y0 + ',' + v.x1 + ',' + v.y1;
-  if (backdropCache && backdropCache.key === key) return backdropCache;
-  const w = Math.max(1, Math.round(v.x1 - v.x0)), h = Math.max(1, Math.round(v.y1 - v.y0));
-  const c = mk(w, h), x = c.getContext('2d');
+/* Painted into the static <canvas id="bg"> layer on load and on each resize - never
+   inside the animation loop. Drawing this per frame meant re-rasterising a 19-stop
+   gradient and blitting the moon across the whole viewport 60 times a second. */
+function drawStatic(ctx, view) {
+  const v = view || STAGE_VIEW;
   const a = SKY_STOPS[0][0], b = SKY_STOPS[SKY_STOPS.length - 1][0];
-  const g = x.createLinearGradient(0, a - v.y0, 0, b - v.y0);
+  const g = ctx.createLinearGradient(0, a, 0, b);
   for (const st of SKY_STOPS) g.addColorStop(clamp((st[0] - a) / (b - a), 0, 1), st[1]);
-  x.fillStyle = g;
-  x.fillRect(0, 0, w, h);
-  x.drawImage(moonSprite(), -v.x0, -v.y0);
-  return (backdropCache = { key: key, c: c, x0: v.x0, y0: v.y0 });
+  ctx.fillStyle = g;
+  ctx.fillRect(v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0);
+  ctx.drawImage(moonSprite(), MOON_BOX.x, MOON_BOX.y);
 }
 
 /* ---------- sprite cache (static art is rasterised once, then animated by transform) ---------- */
@@ -1359,30 +1378,79 @@ function sprite(key, bx, by, bw, bh, fn) {
   }
   return c;
 }
+/* Sprite density, in device pixels per stage unit. Baked art is authored in stage
+   units, but the stage is scaled to the viewport, so a 1:1 sprite would be upscaled
+   (and go soft) wherever the stage is magnified. A resize picks a new density, which
+   is part of every baked key, and setSpriteScale() drops the previous generation, so
+   the cache cannot grow past one generation. */
+const SPRITE_SS = { v: 1 };
+/* Bake art that lives in its own coordinate system.
+     key        cache key
+     box        {x, y, w, h} bounding box, in the units the caller blits in
+     unitScale  stage units per box unit at the blit point (0.5 inside a bunny's or the
+                chick's body-local frame, 1 for anything drawn in stage units). Box units
+                reach the screen at unitScale * stage scale device pixels each, which is
+                the density the art is rasterised at - 1:1, no resampling.
+     fn         draws the art, with the canvas origin moved to the box's corner
+   Blit with the returned rect, in box units:
+     const s = bakedSprite(...); ctx.drawImage(s.c, s.x, s.y, s.w, s.h); */
+function bakedSprite(key, box, unitScale, fn) {
+  const ss = SPRITE_SS.v;
+  const dens = unitScale * ss;          // device px per box unit
+  const k = key + '@' + ss;
+  let c = CACHE[k];
+  if (!c) {
+    c = CACHE[k] = mk(Math.max(1, Math.ceil(box.w * dens)), Math.max(1, Math.ceil(box.h * dens)));
+    NOSQ = true;
+    const x = c.getContext('2d');
+    x.scale(dens, dens);
+    x.translate(-box.x, -box.y);
+    fn(x);
+    NOSQ = false;
+  }
+  return { c: c, x: box.x, y: box.y, w: box.w, h: box.h };
+}
+function setSpriteScale(ss) {
+  if (ss === SPRITE_SS.v) return;
+  for (const k in CACHE) if (k.indexOf('@') >= 0) delete CACHE[k];
+  SPRITE_SS.v = ss;
+}
 
 /* ---------- stars ---------- */
+/* The path is vector art whose stroke (0.28*R wide) is crisp, so it stays vector: a
+   sprite blit would resample that stroke and the gradient. What goes away is the churn -
+   the 10 trig calls were recomputed and a 3-stop gradient rebuilt on every one of the
+   ~5 stars drawn per frame. The gradient is created in local coordinates, so one per
+   (context, radius) can be reused under the same translate/rotate. */
+const STAR_PTS = {}, STAR_GRAD = new WeakMap();
 function star5(ctx, x, y, R, rot, alpha) {
+  const key = R.toFixed(3);
+  let pts = STAR_PTS[key];
+  if (!pts) {
+    pts = STAR_PTS[key] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? R * 0.52 : R, a = -Math.PI / 2 + i * Math.PI / 5;
+      pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+    }
+  }
+  let byCtx = STAR_GRAD.get(ctx);
+  if (!byCtx) STAR_GRAD.set(ctx, byCtx = {});
+  let g = byCtx[key];
+  if (!g) g = byCtx[key] = lin(ctx, 0, -R, 0, R, [[0, '#fdeaa2'], [0.55, '#f1c866'], [1, '#d99c3a']]);
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
   ctx.globalAlpha *= alpha;
-  const pts = [];
-  for (let i = 0; i < 10; i++) {
-    const r = i % 2 ? R * 0.52 : R, a = -Math.PI / 2 + i * Math.PI / 5;
-    pts.push([Math.cos(a) * r, Math.sin(a) * r]);
-  }
-  const path = () => {
-    ctx.beginPath();
-    pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-    ctx.closePath();
-  };
-  path();
-  ctx.fillStyle = lin(ctx, 0, -R, 0, R, [[0, '#fdeaa2'], [0.55, '#f1c866'], [1, '#d99c3a']]);
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  ctx.closePath();
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#f5d58a'; ctx.lineWidth = R * 0.28; ctx.stroke();
+  ctx.fillStyle = g;
+  ctx.strokeStyle = '#f5d58a'; ctx.lineWidth = R * 0.28;
+  ctx.stroke();
   ctx.fill();
   ctx.restore();
 }
 const DOT_SPRITES = {};
-function dot(ctx, x, y, r, a, col) {
+function dotSprite(r, col) {
   const ir = Math.round(r * 2.2);
   const color = col || '#fff';
   const key = ir + '_' + color;
@@ -1399,9 +1467,12 @@ function dot(ctx, x, y, r, a, col) {
     sx.fillStyle = g;
     sx.beginPath(); sx.arc(cx, cy, ir, 0, TAU); sx.fill();
   }
+  return spr;
+}
+function dot(ctx, x, y, r, a, col) {
+  const spr = dotSprite(r, col), half = spr.width / 2;
   ctx.save();
   ctx.globalAlpha = a;
-  const half = spr.width / 2;
   ctx.drawImage(spr, x - half, y - half);
   ctx.restore();
 }
@@ -1413,11 +1484,27 @@ const DOTS = [
   [1020, 33, 4, 1], [72, 52, 5, 1], [1519, 88, 4, 1], [1613, 116, 4, 1], [1748, 228, 2, 1],
   [259, 570, 2, 1], [1825, 262, 2, 1], [150, 700, 2, 1], [1470, 400, 2, 1], [1780, 150, 2, 1], [560, 60, 2, 1]
 ];
+/* hash() is two sin() calls per star per frame and its result never changes, so the
+   twinkle frequency/phase, the sprite lookup and the top-left corner are resolved once.
+   The 26 per-star save/restore pairs become one for the whole field. */
+const STARFIELD = DOTS.map((d, i) => {
+  const spr = dotSprite(d[2] * 0.62);
+  return {
+    x: d[0] - spr.width / 2,
+    y: d[1] - spr.height / 2,
+    f: 1.2 + hash(i) * 1.6,
+    phase: hash(i + 9) * TAU,
+    a: d[3] ? 0.5 : 0.95,
+    spr: spr
+  };
+});
 function drawStarsStatic(ctx, t) {
-  DOTS.forEach((d, i) => {
-    const tw = 0.75 + 0.25 * Math.sin(t * (1.2 + hash(i) * 1.6) + hash(i + 9) * TAU);
-    dot(ctx, d[0], d[1], d[2] * 0.62, (d[3] ? 0.5 : 0.95) * tw);
-  });
+  ctx.save();
+  for (const s of STARFIELD) {
+    ctx.globalAlpha = s.a * (0.75 + 0.25 * Math.sin(t * s.f + s.phase));
+    ctx.drawImage(s.spr, s.x, s.y);
+  }
+  ctx.restore();
   // gold stars
   const tw = (k, s) => 1 + s * Math.sin(t * 2.2 + k);
   ctx.save();
@@ -1448,7 +1535,7 @@ function drawShooting(ctx, f) {
   ctx.globalAlpha = fade * 0.55;
   const g = ctx.createLinearGradient(p[0], p[1], q[0], q[1]);
   g.addColorStop(0, 'rgba(240,215,150,0.9)'); g.addColorStop(1, 'rgba(240,215,150,0)');
-  ctx.strokeStyle = g; ctx.lineWidth = 3;
+  ctx.strokeStyle = g; ctx.lineWidth = 3; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0] + (q[0] - p[0]) * 3, q[1] + (q[1] - p[1]) * 3); ctx.stroke();
   ctx.globalAlpha = fade;
   star5(ctx, p[0], p[1], 26, s * 0.22 - 0.3, 1);
@@ -1461,8 +1548,25 @@ const MPATH = [
   [53, 840, 112], [58, 1060, 114], [64, 1280, 145], [70, 1460, 210], [76, 1620, 310],
   [82, 1770, 440], [87, 1890, 560], [91, 1990, 660]
 ];
+/* The mouse is rigid; only position and heading change. Its aura radial gradient and
+   three linear gradients are constant in local coordinates, so they are created once
+   per context instead of five times per frame (x 63 of every 201 frames). */
+const MOUSE_GRAD = new WeakMap();
+function mouseGrads(ctx) {
+  let g = MOUSE_GRAD.get(ctx);
+  if (!g) {
+    MOUSE_GRAD.set(ctx, g = {
+      aura: rad(ctx, 0, 0, 10, 90, [[0, 'rgba(90,240,240,0.55)'], [1, 'rgba(70,200,240,0)']]),
+      earL: lin(ctx, -40, -60, -10, -20, [[0, '#d7fff0'], [1, '#6fe6d6']]),
+      earR: lin(ctx, 10, -60, 30, -20, [[0, '#8df0ea'], [1, '#4ac6dc']]),
+      body: lin(ctx, -20, -30, 20, 44, [[0, '#a8fdf0'], [0.5, '#5fe3ea'], [1, '#34b9e0']])
+    });
+  }
+  return g;
+}
 function drawMouse(ctx, p, t) {
   if (p < 28 || p > 91) return;
+  const g = mouseGrads(ctx);
   const pos = catmull(MPATH, p);
   const pA = catmull(MPATH, Math.max(28, p - 0.5));
   const pB = catmull(MPATH, Math.min(91, p + 0.5));
@@ -1470,18 +1574,18 @@ function drawMouse(ctx, p, t) {
   ctx.save();
   ctx.translate(pos[0], pos[1]); ctx.rotate(ang);
   // aura
-  ctx.fillStyle = rad(ctx, 0, 0, 10, 90, [[0, 'rgba(90,240,240,0.55)'], [1, 'rgba(70,200,240,0)']]);
+  ctx.fillStyle = g.aura;
   ctx.beginPath(); ctx.arc(0, 0, 90, 0, TAU); ctx.fill();
   // tail
   ctx.fillStyle = '#1d7e9e';
   ctx.beginPath(); ctx.moveTo(-36, 20); ctx.lineTo(-62, 36); ctx.lineTo(-58, 46); ctx.lineTo(-30, 36); ctx.closePath(); ctx.fill();
   // ears
-  ctx.fillStyle = lin(ctx, -40, -60, -10, -20, [[0, '#d7fff0'], [1, '#6fe6d6']]);
+  ctx.fillStyle = g.earL;
   ell(ctx, -26, -34, 19, 25, -0.5); ctx.fill();
-  ctx.fillStyle = lin(ctx, 10, -60, 30, -20, [[0, '#8df0ea'], [1, '#4ac6dc']]);
+  ctx.fillStyle = g.earR;
   ell(ctx, 14, -42, 19, 26, 0.4); ctx.fill();
   // body
-  body(ctx, () => ell(ctx, 0, 6, 42, 38, 0), lin(ctx, -20, -30, 20, 44, [[0, '#a8fdf0'], [0.5, '#5fe3ea'], [1, '#34b9e0']]), null, 0, 'rgba(100,240,240,0.8)', 16);
+  body(ctx, () => ell(ctx, 0, 6, 42, 38, 0), g.body, null, 0, 'rgba(100,240,240,0.8)', 16);
   // eye / whisker
   ctx.fillStyle = '#1d7e9e';
   ctx.beginPath(); ctx.moveTo(8, -12); ctx.lineTo(24, -6); ctx.lineTo(8, 0); ctx.closePath(); ctx.fill();
@@ -1554,30 +1658,57 @@ function drawBear(ctx, t, i, bob) {
   });
   ctx.restore();
 }
-function bunnyEars(ctx, ears, sway, fill) {
-  ears.forEach((e, n) => {
-    const [bx, by, tx, ty, w] = e;
-    ctx.save(); ctx.translate(bx, by); ctx.rotate(sway * (n ? 1 : -0.7));
-    const dx = tx - bx, dy = ty - by, L = Math.hypot(dx, dy), a = Math.atan2(dy, dx);
-    ctx.rotate(a);
-    ctx.beginPath();
-    ctx.moveTo(-25, -w * 0.18);
-    ctx.bezierCurveTo(L * 0.26, -w * 0.54, L * 0.52, -w * 0.64, L * 0.82, -w * 0.32);
-    ctx.bezierCurveTo(L * 1.00, -w * 0.18, L * 1.00, w * 0.15, L * 0.82, w * 0.25);
-    ctx.bezierCurveTo(L * 0.52, w * 0.52, L * 0.26, w * 0.42, -25, w * 0.16);
-    ctx.closePath();
-    ctx.shadowColor = 'rgba(190,255,60,0.7)'; ctx.shadowBlur = 12;
-    ctx.fillStyle = lin(ctx, 0, -w, 0, w, [[0, '#c4f53a'], [1, '#8fe014']]); ctx.fill();
-    ctx.shadowBlur = 0; ctx.strokeStyle = '#7fcb0a'; ctx.lineWidth = 4; ctx.stroke();
-    ctx.fillStyle = 'rgba(220,255,120,0.55)';
-    ctx.beginPath();
-    ctx.moveTo(L * 0.12, -w * 0.12);
-    ctx.bezierCurveTo(L * 0.32, -w * 0.44, L * 0.58, -w * 0.50, L * 0.82, -w * 0.18);
-    ctx.bezierCurveTo(L * 0.90, -w * 0.08, L * 0.90, -0.02, L * 0.82, -2);
-    ctx.lineTo(L * 0.42, -2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
+/* One ear, drawn unrotated about its base, in body-local units.
+   The sway used to be baked into the cached bunny sprite (its quantised phase was part
+   of the cache key), so every ~119 ms two fresh 280x350 canvases were allocated and
+   rasterised - shadowBlur, gradients and all - and every canvas ever created stayed
+   resident. The ear is now cached once and the sway is a single rotate() at blit time. */
+function bunnyEarArt(ctx, e) {
+  const [bx, by, tx, ty, w] = e;
+  const L = Math.hypot(tx - bx, ty - by);
+  ctx.rotate(Math.atan2(ty - by, tx - bx));   // base angle; the sway is the caller's rotate()
+  ctx.beginPath();
+  ctx.moveTo(-25, -w * 0.18);
+  ctx.bezierCurveTo(L * 0.26, -w * 0.54, L * 0.52, -w * 0.64, L * 0.82, -w * 0.32);
+  ctx.bezierCurveTo(L * 1.00, -w * 0.18, L * 1.00, w * 0.15, L * 0.82, w * 0.25);
+  ctx.bezierCurveTo(L * 0.52, w * 0.52, L * 0.26, w * 0.42, -25, w * 0.16);
+  ctx.closePath();
+  ctx.shadowColor = 'rgba(190,255,60,0.7)'; ctx.shadowBlur = 12;
+  ctx.fillStyle = lin(ctx, 0, -w, 0, w, [[0, '#c4f53a'], [1, '#8fe014']]); ctx.fill();
+  ctx.shadowBlur = 0; ctx.strokeStyle = '#7fcb0a'; ctx.lineWidth = 4; ctx.stroke();
+  ctx.fillStyle = 'rgba(220,255,120,0.55)';
+  ctx.beginPath();
+  ctx.moveTo(L * 0.12, -w * 0.12);
+  ctx.bezierCurveTo(L * 0.32, -w * 0.44, L * 0.58, -w * 0.50, L * 0.82, -w * 0.18);
+  ctx.bezierCurveTo(L * 0.90, -w * 0.08, L * 0.90, -0.02, L * 0.82, -2);
+  ctx.lineTo(L * 0.42, -2);
+  ctx.closePath();
+  ctx.fill();
+}
+/* Bounding box of one rotated ear, in body-local units (the units the bunny sprite is
+   blitted in). The padding covers the 4 px stroke, the 12 px shadowBlur and the
+   +/-0.05 rad sway sweep, which puts the tip about 8 units off-axis. */
+const EAR_PAD = 24;
+function earLocalBox(e) {
+  const [bx, by, tx, ty, w] = e;
+  const L = Math.hypot(tx - bx, ty - by), a = Math.atan2(ty - by, tx - bx);
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const x0 = -25 - EAR_PAD, x1 = L + EAR_PAD;
+  const y0 = -w * 0.64 - EAR_PAD, y1 = w * 0.52 + EAR_PAD;
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const p of [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) {
+    const lx = bx + p[0] * ca - p[1] * sa, ly = by + p[0] * sa + p[1] * ca;
+    if (lx < minx) minx = lx; if (lx > maxx) maxx = lx;
+    if (ly < miny) miny = ly; if (ly > maxy) maxy = ly;
+  }
+  const x = Math.floor(minx), y = Math.floor(miny);
+  return { x: x, y: y, w: Math.ceil(maxx) - x + 1, h: Math.ceil(maxy) - y + 1 };
+}
+function earSprite(e, key) {
+  const box = earLocalBox(e);
+  return bakedSprite(key, box, 0.5, x => {
+    x.translate(e[0], e[1]);          // the ear's art is anchored at its base
+    bunnyEarArt(x, e);
   });
 }
 function eyeBunny(ctx, x, y, mode, blink, look) {
@@ -1612,7 +1743,6 @@ function drawBunnyL(ctx, t, i, bob, exc, blink, look) {
   squash(ctx, 870, 552, 1 - k * 0.6, 1 + k, -bob);
   local(ctx, 760, 240, () => {
     body(ctx, () => ell(ctx, 28, 574, 34, 24, 0.3), '#98e810', '#78c808', 4, null, 0);
-    bunnyEars(ctx, [[172, 246, 112, 98, 44], [232, 242, 198, 56, 44]], 0.05 * Math.sin(t * 2.2), 0);
     const path = () => {
       ctx.beginPath(); ctx.moveTo(35, 520);
       ctx.bezierCurveTo(28, 380, 120, 246, 250, 246);
@@ -1644,7 +1774,6 @@ function drawBunnyR(ctx, t, i, bob, exc, blink, look) {
   squash(ctx, 1050, 552, 1 - k * 0.6, 1 + k, -bob);
   local(ctx, 760, 240, () => {
     body(ctx, () => ell(ctx, 752, 582, 34, 24, -0.3), '#98e810', '#78c808', 4, null, 0);
-    bunnyEars(ctx, [[578, 246, 552, 50, 44], [632, 246, 692, 46, 44]], 0.05 * Math.sin(t * 2.2 + 1), 0);
     const path = () => {
       ctx.beginPath(); ctx.moveTo(390, 500);
       ctx.bezierCurveTo(385, 380, 470, 246, 590, 246);
@@ -1660,14 +1789,14 @@ function drawBunnyR(ctx, t, i, bob, exc, blink, look) {
   });
   ctx.restore();
 }
-function drawChick(ctx, t, x, y, rot, blink, flap) {
-  ctx.save();
-  ctx.translate(x, y); ctx.rotate(rot); ctx.scale(0.5 * (1 + flap * 0.22), 0.5 * (1 + flap * 0.22));
-  // tuft
-  ctx.save(); ctx.translate(-82, -84);
-  ctx.rotate(0.35 + 0.08 * Math.sin(t * 5));
-  body(ctx, () => ell(ctx, 0, -12, 17, 30, 0), lin(ctx, 0, -40, 0, 20, [[0, '#ffe777'], [1, '#f6b934']]), '#f3c545', 3, null, 0);
-  ctx.restore();
+/* The chick is rigid as well: hop position, heading, wing-flap squash and the tuft
+   sway are all pure transforms, so the body (two gradients plus a shadowBlur fill) and
+   the tuft (another gradient) are baked in the chick's body-local units. The 0.5 of the
+   original transform stays a plain scale(), so the flap squash behaves exactly as it
+   did; it is just no longer re-rasterised from scratch every frame. */
+const CHICK_BOX = { x: -126, y: -100, w: 246, h: 206 };
+const TUFT_BOX = { x: -32, y: -58, w: 64, h: 84 };
+function chickBodyArt(ctx, blink) {
   const path = () => {
     ctx.beginPath(); ctx.moveTo(-100, 40);
     ctx.bezierCurveTo(-112, -30, -60, -76, 10, -76);
@@ -1678,6 +1807,29 @@ function drawChick(ctx, t, x, y, rot, blink, flap) {
   ctx.fillStyle = '#4a2a10';
   if (!blink) { ell(ctx, -35, -20, 9, 9, 0); ctx.fill(); ell(ctx, 24, -50, 8, 8, 0); ctx.fill(); }
   ctx.fillStyle = '#f08a2a'; ctx.beginPath(); ctx.moveTo(-8, -4); ctx.lineTo(14, -12); ctx.lineTo(0, 8); ctx.closePath(); ctx.fill();
+}
+function chickTuftArt(ctx) {
+  body(ctx, () => ell(ctx, 0, -12, 17, 30, 0), lin(ctx, 0, -40, 0, 20, [[0, '#ffe777'], [1, '#f6b934']]), '#f3c545', 3, null, 0);
+}
+function chickSprite(blink) {
+  return bakedSprite('chick' + (blink ? 1 : 0), CHICK_BOX, 0.5, x => chickBodyArt(x, blink));
+}
+function chickTuftSprite() {
+  return bakedSprite('chickTuft', TUFT_BOX, 0.5, x => chickTuftArt(x));
+}
+function drawChick(ctx, t, x, y, rot, blink, flap) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(rot);
+  ctx.scale(0.5 * (1 + flap * 0.22), 0.5 * (1 + flap * 0.22));
+  // tuft - swings about its base at (-82, -84) in body-local units
+  const tf = chickTuftSprite();
+  ctx.save();
+  ctx.translate(-82, -84);
+  ctx.rotate(0.35 + 0.08 * Math.sin(t * 5));
+  ctx.drawImage(tf.c, tf.x, tf.y, tf.w, tf.h);
+  ctx.restore();
+  const bd = chickSprite(blink);
+  ctx.drawImage(bd.c, bd.x, bd.y, bd.w, bd.h);
   ctx.restore();
 }
 function drawPanda(ctx, t, i, bob) {
@@ -1778,19 +1930,26 @@ function drawMoonBase(ctx) {
   glow(1330, 640, 110, 40, [200, 150, 255], 0.22);
   ctx.restore();
 }
-function drawMoon(ctx, t, f, e, blink) {
-  /* face */
-  const eyeC = 'rgba(112,198,140,0.95)';
-  ctx.save();
-  ctx.fillStyle = 'rgba(250,238,140,0.9)';
-  ell(ctx, 760, 708, 33, 24, 0); ctx.fill();
-  ell(ctx, 1104, 706, 33, 24, 0); ctx.fill();
-  ctx.fillStyle = eyeC; ctx.strokeStyle = eyeC;
-  const ey = 640;
-  [824, 1024].forEach(x => {
-    if (blink) { ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x - 14, ey + 2); ctx.lineTo(x + 14, ey + 2); ctx.stroke(); }
-    else { ell(ctx, x, ey, 17, 16, 0); ctx.fill(); }
+const MOON_FACE_BOX = { x: 720, y: 615, w: 425, h: 125 };
+function moonFaceSprite(blink) {
+  return bakedSprite('moonface' + (blink ? 1 : 0), MOON_FACE_BOX, 1, x => {
+    const eyeC = 'rgba(112,198,140,0.95)';
+    x.fillStyle = 'rgba(250,238,140,0.9)';
+    ell(x, 760, 708, 33, 24, 0); x.fill();
+    ell(x, 1104, 706, 33, 24, 0); x.fill();
+    x.fillStyle = eyeC; x.strokeStyle = eyeC;
+    const ey = 640;
+    [824, 1024].forEach(px => {
+      if (blink) { x.lineWidth = 4; x.beginPath(); x.moveTo(px - 14, ey + 2); x.lineTo(px + 14, ey + 2); x.stroke(); }
+      else { ell(x, px, ey, 17, 16, 0); x.fill(); }
+    });
   });
+}
+function drawMoon(ctx, t, f, e, blink) {
+  /* face: blush + eyes are constant, only the mouth morphs */
+  const mf = moonFaceSprite(blink);
+  ctx.save();
+  ctx.drawImage(mf.c, mf.x, mf.y, mf.w, mf.h);
   ctx.lineCap = 'round';
   // mouth: smile <-> "o"
   ctx.globalAlpha = 1 - e;
@@ -1804,20 +1963,26 @@ function drawMoon(ctx, t, f, e, blink) {
 }
 
 /* ---------- Z's ---------- */
+const Z_BOX = { x: -32, y: -32, w: 64, h: 64 };
+function zSprite() {
+  return bakedSprite('zglyph', Z_BOX, 1, x => {
+    x.lineJoin = 'round'; x.lineCap = 'round';
+    const p = () => { x.beginPath(); x.moveTo(-14, -14); x.lineTo(14, -12); x.lineTo(-14, 14); x.lineTo(14, 14); };
+    x.strokeStyle = 'rgba(120,140,200,0.6)'; x.lineWidth = 9; p(); x.stroke();
+    x.strokeStyle = '#f3f7ff'; x.lineWidth = 6; p(); x.stroke();
+  });
+}
 function drawZ(ctx, x, y, s, rot, a) {
+  const z = zSprite();
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s); ctx.globalAlpha = a;
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  const p = () => { ctx.beginPath(); ctx.moveTo(-14, -14); ctx.lineTo(14, -12); ctx.lineTo(-14, 14); ctx.lineTo(14, 14); };
-  ctx.strokeStyle = 'rgba(120,140,200,0.6)'; ctx.lineWidth = 9; p(); ctx.stroke();
-  ctx.strokeStyle = '#f3f7ff'; ctx.lineWidth = 6; p(); ctx.stroke();
+  ctx.drawImage(z.c, z.x, z.y, z.w, z.h);
   ctx.restore();
 }
 
 /* ---------- main ---------- */
 function draw(ctx, t, view) {
-  const bd = backdrop(view || STAGE_VIEW);
-  ctx.drawImage(bd.c, bd.x0, bd.y0);
-
+  /* The sky + moon live in the static #bg layer now and are never redrawn here. */
   const f = t * FPS;
   const p = ((f % LOOP) + LOOP) % LOOP;
   // excitement envelope
@@ -1854,25 +2019,40 @@ function draw(ctx, t, view) {
   drawChick(ctx, t, cp[0], cp[1], crot, chickBlink, air ? sstep(38, 42, p) * (1 - sstep(52, 55, p)) : 0);
 
   const ex = e > 0.5 ? 1 : 0, bb = bunnyBlink && e < 0.1 ? 1 : 0;
-  const PH = TAU / 24;
-  // Quantised ear sway phase. The sway is sin(t*2.2), periodic with period TAU, so only
-  // 24 distinct states exist - wrap the phase index so sprite cache keys repeat instead
-  // of growing forever (the unbounded key used to leak two large canvases every ~119 ms).
-  const earPhase = ((Math.round((t * 2.2) / PH) % 24) + 24) % 24;
-  const tq = earPhase * PH / 2.2;
   const lk = e > 0.5 ? 0 : 1;
-  const put = (key, box, anc, i, bobv, raw) => {
+  // Cache keys no longer carry the sway phase: the bunnies' ears are separate cached
+  // sprites that are rotated at blit time, so a bunny sprite is rebuilt only when it
+  // actually changes expression - not twice every ~119 ms forever.
+  const put = (key, box, anc, i, bobv, raw, ears) => {
     const c = sprite(key, box[0], box[1], box[2], box[3], raw);
     const k = 0.014 * Math.sin(t * 2.6 + i);
     ctx.save();
     ctx.translate(anc[0], anc[1] - bobv); ctx.scale(1 - k * 0.6, 1 + k); ctx.translate(-anc[0], -anc[1]);
+    if (ears) {
+      const sway = 0.05 * Math.sin(t * 2.2 + ears.phase);
+      for (let n = 0; n < ears.list.length; n++) {
+        const e = ears.list[n];
+        const sp = earSprite(e, ears.key + n);
+        ctx.save();
+        // the ear sprite is baked in body-local units; map them into stage space
+        // exactly like the bunny's own sprite does (local(ctx, 760, 240, ...))
+        ctx.translate(760, 240); ctx.scale(0.5, 0.5);
+        ctx.translate(e[0], e[1]);          // sway about the ear's base
+        ctx.rotate(sway * (n ? 1 : -0.7));
+        ctx.translate(-e[0], -e[1]);
+        ctx.drawImage(sp.c, sp.x, sp.y, sp.w, sp.h);
+        ctx.restore();
+      }
+    }
     ctx.drawImage(c, box[0], box[1]);
     ctx.restore();
   };
   put('pink', [390, 380, 280, 300], [520, 628], 0, bob(0), x => drawPink(x, 0, 0, 0));
   put('bear', [570, 320, 270, 300], [700, 585], 1, bob(1), x => drawBear(x, 0, 1, 0));
-  put('bl' + ex + bb + lk + '_' + earPhase, [735, 235, 280, 350], [870, 552], 2, bob(2), x => drawBunnyL(x, tq, 2, 0, ex, bb, [-3 * lk, -5 * lk]));
-  put('br' + ex + bb + lk + '_' + earPhase, [925, 235, 260, 350], [1050, 552], 3, bob(3), x => drawBunnyR(x, tq, 3, 0, ex, bb, [-3 * lk, -5 * lk]));
+  put('bl' + ex + bb + lk, [735, 235, 280, 350], [870, 552], 2, bob(2), x => drawBunnyL(x, t, 2, 0, ex, bb, [-3 * lk, -5 * lk]),
+      { list: [[172, 246, 112, 98, 44], [232, 242, 198, 56, 44]], key: 'blear', phase: 0 });
+  put('br' + ex + bb + lk, [925, 235, 260, 350], [1050, 552], 3, bob(3), x => drawBunnyR(x, t, 3, 0, ex, bb, [-3 * lk, -5 * lk]),
+      { list: [[578, 246, 552, 50, 44], [632, 246, 692, 46, 44]], key: 'brear', phase: 1 });
   put('panda', [1110, 320, 270, 290], [1225, 575], 4, bob(4), x => drawPanda(x, 0, 4, 0));
   put('pur' + ex + (purpleBlink && e < 0.1 ? 1 : 0), [1235, 410, 230, 250], [1325, 618], 5, bob(5), x => drawPurple(x, 0, 5, 0, ex, purpleBlink && e < 0.1));
 
@@ -1898,12 +2078,19 @@ function draw(ctx, t, view) {
   }
 }
 
-root.Scene = { draw, W, H, FPS, view: { x0: 0, y0: 0, x1: W, y1: H } };
+root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, view: { x0: 0, y0: 0, x1: W, y1: H } };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 (function(){
   var cv=document.getElementById('c'), ctx=cv.getContext('2d');
+  var bg=document.getElementById('bg'), bgx=bg.getContext('2d');
   var s=1, ox=0, oy=0, cw=1872, ch=1044, pending=0;
+  function paintStatic(){
+    bgx.setTransform(1,0,0,1,0,0);
+    bgx.clearRect(0,0,cw,ch);
+    bgx.setTransform(s,0,0,s,ox,oy);
+    Scene.drawStatic(bgx,Scene.view);
+  }
   function fit(){
     var vw=Math.max(1,innerWidth), vh=Math.max(1,innerHeight);
     var dpr=Math.min(window.devicePixelRatio||1,2);
@@ -1911,11 +2098,14 @@ root.Scene = { draw, W, H, FPS, view: { x0: 0, y0: 0, x1: W, y1: H } };
     if(px>maxPx) dpr*=Math.sqrt(maxPx/px);
     cw=Math.round(vw*dpr); ch=Math.round(vh*dpr);
     cv.width=cw; cv.height=ch;
+    bg.width=cw; bg.height=ch;
     s=Math.min(cw/1872, ch/1044);                    // whole picture stays visible
     ox=(cw-1872*s)/2; oy=ch-1044*s;                  // centred, pinned to the bottom edge
     var eps=1e-6, v=Scene.view;                       // rect of stage space the canvas shows
     v.x0=Math.floor(-ox/s-eps); v.y0=Math.floor(-oy/s-eps);
     v.x1=Math.ceil((cw-ox)/s+eps); v.y1=Math.ceil((ch-oy)/s+eps);
+    Scene.setSpriteScale(Math.min(2, Math.max(0.5, s)));
+    paintStatic();
   }
   function schedule(){ if(pending) clearTimeout(pending); pending=setTimeout(function(){ pending=0; fit(); },120); }
   addEventListener('resize',schedule); addEventListener('orientationchange',schedule);
