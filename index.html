@@ -1418,12 +1418,15 @@ function setSpriteScale(ss) {
 
 /* ---------- stars ---------- */
 /* The path is vector art whose stroke (0.28*R wide) is crisp, so it stays vector: a
-   sprite blit would resample that stroke and the gradient. What goes away is the churn -
-   the 10 trig calls were recomputed and a 3-stop gradient rebuilt on every one of the
-   ~5 stars drawn per frame. The gradient is created in local coordinates, so one per
-   (context, radius) can be reused under the same translate/rotate. */
+   sprite blit would resample that stroke and the gradient. R is the star's BASE radius
+   and the twinkle rides on a scale() at draw time, so the cache key never changes.
+   (Keying the cache on the twinkled radius - R.toFixed(3) of a value that moves every
+   frame - meant a fresh 10-point list and a fresh 3-stop gradient were minted per star
+   per frame: the cache could never hit, and STAR_PTS/STAR_GRAD grew without bound.)
+   The gradient is created in local coordinates, so one per (context, radius) can be
+   reused under the same translate/rotate/scale. */
 const STAR_PTS = {}, STAR_GRAD = new WeakMap();
-function star5(ctx, x, y, R, rot, alpha) {
+function star5(ctx, x, y, R, rot, alpha, sc) {
   const key = R.toFixed(3);
   let pts = STAR_PTS[key];
   if (!pts) {
@@ -1437,10 +1440,10 @@ function star5(ctx, x, y, R, rot, alpha) {
   if (!byCtx) STAR_GRAD.set(ctx, byCtx = {});
   let g = byCtx[key];
   if (!g) g = byCtx[key] = lin(ctx, 0, -R, 0, R, [[0, '#fdeaa2'], [0.55, '#f1c866'], [1, '#d99c3a']]);
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); if (sc && sc !== 1) ctx.scale(sc, sc);
   ctx.globalAlpha *= alpha;
   ctx.beginPath();
-  pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  for (let i = 0; i < pts.length; i++) i ? ctx.lineTo(pts[i][0], pts[i][1]) : ctx.moveTo(pts[i][0], pts[i][1]);
   ctx.closePath();
   ctx.lineJoin = 'round';
   ctx.fillStyle = g;
@@ -1505,19 +1508,19 @@ function drawStarsStatic(ctx, t) {
     ctx.drawImage(s.spr, s.x, s.y);
   }
   ctx.restore();
-  // gold stars
+  // gold stars: constant base radius keeps the star5 cache hot; the twinkle is a scale
   const tw = (k, s) => 1 + s * Math.sin(t * 2.2 + k);
   ctx.save();
-  star5(ctx, 137, 659, 44 * tw(0, 0.04), -0.18 + 0.05 * Math.sin(t * 1.5), 1);
-  star5(ctx, 148, 587, 21 * tw(2, 0.07), 0.25 + 0.06 * Math.sin(t * 1.9), 1);
+  star5(ctx, 137, 659, 44, -0.18 + 0.05 * Math.sin(t * 1.5), 1, tw(0, 0.04));
+  star5(ctx, 148, 587, 21, 0.25 + 0.06 * Math.sin(t * 1.9), 1, tw(2, 0.07));
   // (removed) stray gold star sprite that flashed at the top of the frame every
   // 250 frames - not part of the night sky, so it is gone
-  star5(ctx, 1675, 194, 12 * tw(1, 0.15), 0.3, 0.9);
+  star5(ctx, 1675, 194, 12, 0.3, 0.9, tw(1, 0.15));
   ctx.restore();
 }
 const SPATH = [[0, 1180], [8, 1049], [12, 999], [16, 901], [18, 878], [20, 760], [22, 744], [28, 627], [36, 480], [44, 350], [47, 330]];
 function shootPos(s) {
-  const ks = SPATH.map(p => [p[0], p[1]]);
+  const ks = SPATH;   // read-only constant - was deep-copied (11 arrays) on every call
   // linear interpolation on x then y from line
   let x;
   if (s <= ks[0][0]) x = ks[0][1]; else {
@@ -1548,49 +1551,46 @@ const MPATH = [
   [53, 840, 112], [58, 1060, 114], [64, 1280, 145], [70, 1460, 210], [76, 1620, 310],
   [82, 1770, 440], [87, 1890, 560], [91, 1990, 660]
 ];
-/* The mouse is rigid; only position and heading change. Its aura radial gradient and
-   three linear gradients are constant in local coordinates, so they are created once
-   per context instead of five times per frame (x 63 of every 201 frames). */
-const MOUSE_GRAD = new WeakMap();
-function mouseGrads(ctx) {
-  let g = MOUSE_GRAD.get(ctx);
-  if (!g) {
-    MOUSE_GRAD.set(ctx, g = {
-      aura: rad(ctx, 0, 0, 10, 90, [[0, 'rgba(90,240,240,0.55)'], [1, 'rgba(70,200,240,0)']]),
-      earL: lin(ctx, -40, -60, -10, -20, [[0, '#d7fff0'], [1, '#6fe6d6']]),
-      earR: lin(ctx, 10, -60, 30, -20, [[0, '#8df0ea'], [1, '#4ac6dc']]),
-      body: lin(ctx, -20, -30, 20, 44, [[0, '#a8fdf0'], [0.5, '#5fe3ea'], [1, '#34b9e0']])
-    });
-  }
-  return g;
+/* The mouse is rigid; only position and heading change. Its aura, its four gradients
+   and the body's 16px shadowBlur glow are all constant in local coordinates, so the
+   whole creature is baked once (glow included) and drawn as a single rotated blit.
+   Re-rasterising that per frame cost a radial-gradient fill, four path fills and a
+   Gaussian blur on every one of the 63 frames in 201 where the mouse is on screen. */
+const MOUSE_BOX = { x: -92, y: -92, w: 184, h: 184 };
+function mouseSprite() {
+  return bakedSprite('mouse', MOUSE_BOX, 1, x => {
+    // aura
+    x.fillStyle = rad(x, 0, 0, 10, 90, [[0, 'rgba(90,240,240,0.55)'], [1, 'rgba(70,200,240,0)']]);
+    x.beginPath(); x.arc(0, 0, 90, 0, TAU); x.fill();
+    // tail
+    x.fillStyle = '#1d7e9e';
+    x.beginPath(); x.moveTo(-36, 20); x.lineTo(-62, 36); x.lineTo(-58, 46); x.lineTo(-30, 36); x.closePath(); x.fill();
+    // ears
+    x.fillStyle = lin(x, -40, -60, -10, -20, [[0, '#d7fff0'], [1, '#6fe6d6']]);
+    ell(x, -26, -34, 19, 25, -0.5); x.fill();
+    x.fillStyle = lin(x, 10, -60, 30, -20, [[0, '#8df0ea'], [1, '#4ac6dc']]);
+    ell(x, 14, -42, 19, 26, 0.4); x.fill();
+    // body (its glow is part of the rigid art)
+    body(x, () => ell(x, 0, 6, 42, 38, 0),
+      lin(x, -20, -30, 20, 44, [[0, '#a8fdf0'], [0.5, '#5fe3ea'], [1, '#34b9e0']]),
+      null, 0, 'rgba(100,240,240,0.8)', 16);
+    // eye / whisker
+    x.fillStyle = '#1d7e9e';
+    x.beginPath(); x.moveTo(8, -12); x.lineTo(24, -6); x.lineTo(8, 0); x.closePath(); x.fill();
+    x.strokeStyle = 'rgba(235,255,255,0.9)'; x.lineWidth = 3; x.lineCap = 'round';
+    x.beginPath(); x.moveTo(38, -4); x.lineTo(56, -16); x.stroke();
+  });
 }
 function drawMouse(ctx, p, t) {
   if (p < 28 || p > 91) return;
-  const g = mouseGrads(ctx);
   const pos = catmull(MPATH, p);
   const pA = catmull(MPATH, Math.max(28, p - 0.5));
   const pB = catmull(MPATH, Math.min(91, p + 0.5));
-  let ang = Math.atan2(pB[1] - pA[1], pB[0] - pA[0]) * 0.45 - 0.25;
+  const ang = Math.atan2(pB[1] - pA[1], pB[0] - pA[0]) * 0.45 - 0.25;
+  const m = mouseSprite();
   ctx.save();
   ctx.translate(pos[0], pos[1]); ctx.rotate(ang);
-  // aura
-  ctx.fillStyle = g.aura;
-  ctx.beginPath(); ctx.arc(0, 0, 90, 0, TAU); ctx.fill();
-  // tail
-  ctx.fillStyle = '#1d7e9e';
-  ctx.beginPath(); ctx.moveTo(-36, 20); ctx.lineTo(-62, 36); ctx.lineTo(-58, 46); ctx.lineTo(-30, 36); ctx.closePath(); ctx.fill();
-  // ears
-  ctx.fillStyle = g.earL;
-  ell(ctx, -26, -34, 19, 25, -0.5); ctx.fill();
-  ctx.fillStyle = g.earR;
-  ell(ctx, 14, -42, 19, 26, 0.4); ctx.fill();
-  // body
-  body(ctx, () => ell(ctx, 0, 6, 42, 38, 0), g.body, null, 0, 'rgba(100,240,240,0.8)', 16);
-  // eye / whisker
-  ctx.fillStyle = '#1d7e9e';
-  ctx.beginPath(); ctx.moveTo(8, -12); ctx.lineTo(24, -6); ctx.lineTo(8, 0); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = 'rgba(235,255,255,0.9)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(38, -4); ctx.lineTo(56, -16); ctx.stroke();
+  ctx.drawImage(m.c, m.x, m.y, m.w, m.h);
   ctx.restore();
 }
 
@@ -1980,6 +1980,61 @@ function drawZ(ctx, x, y, s, rot, a) {
   ctx.restore();
 }
 
+/* ---------- character blit table ---------- */
+/* Boxes, anchors, ear rigs and painters are module constants: the call sites below used
+   to rebuild all of that as fresh literals (plus the put/bob closures) every frame.
+   The painters run only on a cache miss, and squash() is a no-op under NOSQ, so the
+   frame state they read (EXPR) never changes the baked art for a given cache key. */
+const EXPR = { t: 0, ex: 0, bb: 0, lk: 0, pb: 0 };
+/* chick's hop path, [frame, x, y] - constant, so it lives here rather than in draw() */
+const CK = [[0, 995, 345], [36, 995, 345], [40, 940, 268], [44, 892, 205], [48, 874, 186], [51, 874, 176], [53, 900, 235], [55, 960, 320], [57, 996, 352], [59, 996, 347], [61, 995, 347]];
+/* surprise-tick fan angles beside the sleepy cat */
+const TICK_ANGLES = [-0.9, -0.3, 0.3];
+const BL_EARS = { list: [[172, 246, 112, 98, 44], [232, 242, 198, 56, 44]], key: 'blear', phase: 0 };
+const BR_EARS = { list: [[578, 246, 552, 50, 44], [632, 246, 692, 46, 44]], key: 'brear', phase: 1 };
+const PUTS = [
+  { key: 'pink',  box: [390, 380, 280, 300],  anc: [520, 628],  i: 0, raw: x => drawPink(x, 0, 0, 0) },
+  { key: 'bear',  box: [570, 320, 270, 300],  anc: [700, 585],  i: 1, raw: x => drawBear(x, 0, 1, 0) },
+  { key: 'bl',    box: [735, 235, 280, 350],  anc: [870, 552],  i: 2, ears: BL_EARS, expr: 1,
+    raw: x => drawBunnyL(x, EXPR.t, 2, 0, EXPR.ex, EXPR.bb, [-3 * EXPR.lk, -5 * EXPR.lk]) },
+  { key: 'br',    box: [925, 235, 260, 350],  anc: [1050, 552], i: 3, ears: BR_EARS, expr: 1,
+    raw: x => drawBunnyR(x, EXPR.t, 3, 0, EXPR.ex, EXPR.bb, [-3 * EXPR.lk, -5 * EXPR.lk]) },
+  { key: 'panda', box: [1110, 320, 270, 290], anc: [1225, 575], i: 4, raw: x => drawPanda(x, 0, 4, 0) },
+  { key: 'pur',   box: [1235, 410, 230, 250], anc: [1325, 618], i: 5, expr: 2,
+    raw: x => drawPurple(x, 0, 5, 0, EXPR.ex, EXPR.pb === 1) }
+];
+/* Blit one cached character. Static art is rasterised once (see sprite()); everything
+   here is a transform. Cache keys no longer carry the sway phase: the bunnies' ears are
+   separate cached sprites that are rotated at blit time, so a bunny sprite is rebuilt
+   only when it actually changes expression - not twice every ~119 ms forever. */
+function put(ctx, t, key, d, bobv) {
+  const box = d.box, anc = d.anc, ears = d.ears;
+  const c = sprite(key, box[0], box[1], box[2], box[3], d.raw);
+  const k = 0.014 * Math.sin(t * 2.6 + d.i);
+  ctx.save();
+  ctx.translate(anc[0], anc[1] - bobv); ctx.scale(1 - k * 0.6, 1 + k); ctx.translate(-anc[0], -anc[1]);
+  if (ears) {
+    const sway = 0.05 * Math.sin(t * 2.2 + ears.phase);
+    for (let n = 0; n < ears.list.length; n++) {
+      const e = ears.list[n];
+      const sp = earSprite(e, ears.key + n);
+      ctx.save();
+      // the ear sprite is baked in body-local units; map them into stage space
+      // exactly like the bunny's own sprite does (local(ctx, 760, 240, ...))
+      ctx.translate(760, 240); ctx.scale(0.5, 0.5);
+      ctx.translate(e[0], e[1]);          // sway about the ear's base
+      ctx.rotate(sway * (n ? 1 : -0.7));
+      ctx.translate(-e[0], -e[1]);
+      ctx.drawImage(sp.c, sp.x, sp.y, sp.w, sp.h);
+      ctx.restore();
+    }
+  }
+  ctx.drawImage(c, box[0], box[1]);
+  ctx.restore();
+}
+/* bounce when excited */
+function bob(i, t, e) { return e * (6 + 6 * Math.abs(Math.sin(t * 5.2 + i * 0.7))); }
+
 /* ---------- main ---------- */
 function draw(ctx, t, view) {
   /* The sky + moon live in the static #bg layer now and are never redrawn here. */
@@ -2008,11 +2063,7 @@ function draw(ctx, t, view) {
 
   drawMoon(ctx, t, f, e, moonBlink);
 
-  // bounce when excited
-  const bob = (i) => e * (6 + 6 * Math.abs(Math.sin(t * 5.2 + i * 0.7)));
-
   // chick
-  const CK = [[0, 995, 345], [36, 995, 345], [40, 940, 268], [44, 892, 205], [48, 874, 186], [51, 874, 176], [53, 900, 235], [55, 960, 320], [57, 996, 352], [59, 996, 347], [61, 995, 347]];
   let cp = p < 36 || p > 61 ? [995, 345 + 2.5 * Math.sin(t * 2.6)] : catmull(CK, p);
   const air = p > 38 && p < 56;
   const crot = air ? 0.12 * Math.sin(t * 9) : 0.03 * Math.sin(t * 2.2);
@@ -2020,50 +2071,24 @@ function draw(ctx, t, view) {
 
   const ex = e > 0.5 ? 1 : 0, bb = bunnyBlink && e < 0.1 ? 1 : 0;
   const lk = e > 0.5 ? 0 : 1;
-  // Cache keys no longer carry the sway phase: the bunnies' ears are separate cached
-  // sprites that are rotated at blit time, so a bunny sprite is rebuilt only when it
-  // actually changes expression - not twice every ~119 ms forever.
-  const put = (key, box, anc, i, bobv, raw, ears) => {
-    const c = sprite(key, box[0], box[1], box[2], box[3], raw);
-    const k = 0.014 * Math.sin(t * 2.6 + i);
-    ctx.save();
-    ctx.translate(anc[0], anc[1] - bobv); ctx.scale(1 - k * 0.6, 1 + k); ctx.translate(-anc[0], -anc[1]);
-    if (ears) {
-      const sway = 0.05 * Math.sin(t * 2.2 + ears.phase);
-      for (let n = 0; n < ears.list.length; n++) {
-        const e = ears.list[n];
-        const sp = earSprite(e, ears.key + n);
-        ctx.save();
-        // the ear sprite is baked in body-local units; map them into stage space
-        // exactly like the bunny's own sprite does (local(ctx, 760, 240, ...))
-        ctx.translate(760, 240); ctx.scale(0.5, 0.5);
-        ctx.translate(e[0], e[1]);          // sway about the ear's base
-        ctx.rotate(sway * (n ? 1 : -0.7));
-        ctx.translate(-e[0], -e[1]);
-        ctx.drawImage(sp.c, sp.x, sp.y, sp.w, sp.h);
-        ctx.restore();
-      }
-    }
-    ctx.drawImage(c, box[0], box[1]);
-    ctx.restore();
-  };
-  put('pink', [390, 380, 280, 300], [520, 628], 0, bob(0), x => drawPink(x, 0, 0, 0));
-  put('bear', [570, 320, 270, 300], [700, 585], 1, bob(1), x => drawBear(x, 0, 1, 0));
-  put('bl' + ex + bb + lk, [735, 235, 280, 350], [870, 552], 2, bob(2), x => drawBunnyL(x, t, 2, 0, ex, bb, [-3 * lk, -5 * lk]),
-      { list: [[172, 246, 112, 98, 44], [232, 242, 198, 56, 44]], key: 'blear', phase: 0 });
-  put('br' + ex + bb + lk, [925, 235, 260, 350], [1050, 552], 3, bob(3), x => drawBunnyR(x, t, 3, 0, ex, bb, [-3 * lk, -5 * lk]),
-      { list: [[578, 246, 552, 50, 44], [632, 246, 692, 46, 44]], key: 'brear', phase: 1 });
-  put('panda', [1110, 320, 270, 290], [1225, 575], 4, bob(4), x => drawPanda(x, 0, 4, 0));
-  put('pur' + ex + (purpleBlink && e < 0.1 ? 1 : 0), [1235, 410, 230, 250], [1325, 618], 5, bob(5), x => drawPurple(x, 0, 5, 0, ex, purpleBlink && e < 0.1));
+  // painters read EXPR only when a cache key first appears (see PUTS above)
+  EXPR.t = t; EXPR.ex = ex; EXPR.bb = bb; EXPR.lk = lk; EXPR.pb = (purpleBlink && e < 0.1) ? 1 : 0;
+  for (let n = 0; n < PUTS.length; n++) {
+    const d = PUTS[n];
+    const key = d.expr === 1 ? d.key + ex + bb + lk
+              : d.expr === 2 ? d.key + ex + EXPR.pb
+              : d.key;
+    put(ctx, t, key, d, bob(d.i, t, e));
+  }
 
   // surprise ticks next to the sleepy cat when the hero moment starts
   { const a = sstep(33, 36, p) * (1 - sstep(44, 48, p));
     if (a > 0.01) {
       ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#f4f8ff'; ctx.lineWidth = 5; ctx.lineCap = 'round';
-      [[-0.9, 0], [-0.3, 0], [0.3, 0]].forEach(([an]) => {
+      for (const an of TICK_ANGLES) {
         const ox = 585, oy = 372, r0 = 14 + 6 * (p - 33) / 10, r1 = r0 + 12;
         ctx.beginPath(); ctx.moveTo(ox + Math.cos(an - 1.4) * r0, oy + Math.sin(an - 1.4) * r0); ctx.lineTo(ox + Math.cos(an - 1.4) * r1, oy + Math.sin(an - 1.4) * r1); ctx.stroke();
-      });
+      }
       ctx.restore();
     } }
   // Zzz floating from the sleepy pink one
@@ -2083,7 +2108,10 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, view: { x0: 0, y0: 0
 
 (function(){
   var cv=document.getElementById('c'), ctx=cv.getContext('2d');
-  var bg=document.getElementById('bg'), bgx=bg.getContext('2d');
+  // The static layer is fully covered by the sky gradient on every paint (the view rect
+  // always spans the whole bitmap), so it can be opaque: the compositor then skips
+  // per-pixel alpha blending of this full-viewport backdrop on every display frame.
+  var bg=document.getElementById('bg'), bgx=bg.getContext('2d', {alpha:false});
   var s=1, ox=0, oy=0, cw=1872, ch=1044, pending=0;
   function paintStatic(){
     bgx.setTransform(1,0,0,1,0,0);
