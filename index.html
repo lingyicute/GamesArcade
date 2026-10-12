@@ -497,8 +497,6 @@
       white-space: nowrap;
     }
     .game-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-    .game-grid:not(.classic-grid) { display: flex; flex-wrap: wrap; justify-content: center; }
-    .game-grid:not(.classic-grid) .game-card { flex: 0 0 calc((100% - 32px) / 3); }
     .classic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .game-card {
       --accent: #ffe28a;
@@ -756,9 +754,7 @@
       .wrap { width: min(100% - 44px, 760px); }
       .collection-top { align-items: flex-start; flex-direction: column; gap: 18px; }
       .filters { align-self: flex-start; }
-      .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .game-grid:not(.classic-grid) .game-card { flex-basis: calc((100% - 16px) / 2); }
-      .classic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .game-grid, .classic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .group-count { font-size: 8px; }
     }
     @media (max-width: 640px) {
@@ -794,7 +790,6 @@
       .group-heading p { max-width: 30ch; font-size: 9px; }
       .group-count { font-size: 7px; letter-spacing: .13em; }
       .game-grid, .classic-grid { grid-template-columns: 1fr; gap: 12px; }
-      .game-grid:not(.classic-grid) .game-card { flex-basis: 100%; }
       .game-card { min-height: 338px; }
       .game-preview { height: 145px; }
       .game-info { padding: 16px 17px 15px; }
