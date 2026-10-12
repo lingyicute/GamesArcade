@@ -1296,14 +1296,26 @@ function body(ctx, pathFn, fill, stroke, lw, glow, blur) {
   if (stroke) { ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.lineJoin = 'round'; ctx.stroke(); }
   ctx.restore();
 }
-function catmull(pts, t) {   // pts: [[t,x,y],...]
-  if (t <= pts[0][0]) return [pts[0][1], pts[0][2]];
-  if (t >= pts[pts.length - 1][0]) return [pts[pts.length - 1][1], pts[pts.length - 1][2]];
+const _catOut = [0, 0];
+function catmull(pts, t, out) {   // pts: [[t,x,y],...]
+  const res = out || _catOut;
+  const n = pts.length;
+  if (t <= pts[0][0]) { res[0] = pts[0][1]; res[1] = pts[0][2]; return res; }
+  if (t >= pts[n - 1][0]) { res[0] = pts[n - 1][1]; res[1] = pts[n - 1][2]; return res; }
   let i = 0; while (t > pts[i + 1][0]) i++;
-  const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
-  const u = (t - p1[0]) / (p2[0] - p1[0]), u2 = u * u, u3 = u2 * u;
-  const f = (a, b, c, d) => 0.5 * ((2 * b) + (-a + c) * u + (2 * a - 5 * b + 4 * c - d) * u2 + (-a + 3 * b - 3 * c + d) * u3);
-  return [f(p0[1], p1[1], p2[1], p3[1]), f(p0[2], p1[2], p2[2], p3[2])];
+  const p0 = pts[i === 0 ? 0 : i - 1];
+  const p1 = pts[i];
+  const p2 = pts[i + 1];
+  const p3 = pts[i + 2 >= n ? n - 1 : i + 2];
+  const dt = p2[0] - p1[0];
+  const u = (t - p1[0]) / dt, u2 = u * u, u3 = u2 * u;
+  const c0 = -u3 + 2 * u2 - u;
+  const c1 = 3 * u3 - 5 * u2 + 2;
+  const c2 = -3 * u3 + 4 * u2 + u;
+  const c3 = u3 - u2;
+  res[0] = 0.5 * (p0[1] * c0 + p1[1] * c1 + p2[1] * c2 + p3[1] * c3);
+  res[1] = 0.5 * (p0[2] * c0 + p1[2] * c1 + p2[2] * c2 + p3[2] * c3);
+  return res;
 }
 function hash(n) { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
 
@@ -1398,17 +1410,18 @@ function bakedSprite(key, box, unitScale, fn) {
   const ss = SPRITE_SS.v;
   const dens = unitScale * ss;          // device px per box unit
   const k = key + '@' + ss;
-  let c = CACHE[k];
-  if (!c) {
-    c = CACHE[k] = mk(Math.max(1, Math.ceil(box.w * dens)), Math.max(1, Math.ceil(box.h * dens)));
+  let entry = CACHE[k];
+  if (!entry) {
+    const c = mk(Math.max(1, Math.ceil(box.w * dens)), Math.max(1, Math.ceil(box.h * dens)));
     NOSQ = true;
     const x = c.getContext('2d');
     x.scale(dens, dens);
     x.translate(-box.x, -box.y);
     fn(x);
     NOSQ = false;
+    entry = CACHE[k] = { c: c, x: box.x, y: box.y, w: box.w, h: box.h };
   }
-  return { c: c, x: box.x, y: box.y, w: box.w, h: box.h };
+  return entry;
 }
 function setSpriteScale(ss) {
   if (ss === SPRITE_SS.v) return;
@@ -1420,17 +1433,13 @@ function setSpriteScale(ss) {
 /* The path is vector art whose stroke (0.28*R wide) is crisp, so it stays vector: a
    sprite blit would resample that stroke and the gradient. R is the star's BASE radius
    and the twinkle rides on a scale() at draw time, so the cache key never changes.
-   (Keying the cache on the twinkled radius - R.toFixed(3) of a value that moves every
-   frame - meant a fresh 10-point list and a fresh 3-stop gradient were minted per star
-   per frame: the cache could never hit, and STAR_PTS/STAR_GRAD grew without bound.)
    The gradient is created in local coordinates, so one per (context, radius) can be
    reused under the same translate/rotate/scale. */
 const STAR_PTS = {}, STAR_GRAD = new WeakMap();
 function star5(ctx, x, y, R, rot, alpha, sc) {
-  const key = R.toFixed(3);
-  let pts = STAR_PTS[key];
+  let pts = STAR_PTS[R];
   if (!pts) {
-    pts = STAR_PTS[key] = [];
+    pts = STAR_PTS[R] = [];
     for (let i = 0; i < 10; i++) {
       const r = i % 2 ? R * 0.52 : R, a = -Math.PI / 2 + i * Math.PI / 5;
       pts.push([Math.cos(a) * r, Math.sin(a) * r]);
@@ -1438,8 +1447,8 @@ function star5(ctx, x, y, R, rot, alpha, sc) {
   }
   let byCtx = STAR_GRAD.get(ctx);
   if (!byCtx) STAR_GRAD.set(ctx, byCtx = {});
-  let g = byCtx[key];
-  if (!g) g = byCtx[key] = lin(ctx, 0, -R, 0, R, [[0, '#fdeaa2'], [0.55, '#f1c866'], [1, '#d99c3a']]);
+  let g = byCtx[R];
+  if (!g) g = byCtx[R] = lin(ctx, 0, -R, 0, R, [[0, '#fdeaa2'], [0.55, '#f1c866'], [1, '#d99c3a']]);
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot); if (sc && sc !== 1) ctx.scale(sc, sc);
   ctx.globalAlpha *= alpha;
   ctx.beginPath();
@@ -1501,6 +1510,7 @@ const STARFIELD = DOTS.map((d, i) => {
     spr: spr
   };
 });
+const starTwinkle = (t, k, s) => 1 + s * Math.sin(t * 2.2 + k);
 function drawStarsStatic(ctx, t) {
   ctx.save();
   for (const s of STARFIELD) {
@@ -1508,32 +1518,32 @@ function drawStarsStatic(ctx, t) {
     ctx.drawImage(s.spr, s.x, s.y);
   }
   ctx.restore();
-  // gold stars: constant base radius keeps the star5 cache hot; the twinkle is a scale
-  const tw = (k, s) => 1 + s * Math.sin(t * 2.2 + k);
   ctx.save();
-  star5(ctx, 137, 659, 44, -0.18 + 0.05 * Math.sin(t * 1.5), 1, tw(0, 0.04));
-  star5(ctx, 148, 587, 21, 0.25 + 0.06 * Math.sin(t * 1.9), 1, tw(2, 0.07));
+  star5(ctx, 137, 659, 44, -0.18 + 0.05 * Math.sin(t * 1.5), 1, starTwinkle(t, 0, 0.04));
+  star5(ctx, 148, 587, 21, 0.25 + 0.06 * Math.sin(t * 1.9), 1, starTwinkle(t, 2, 0.07));
   // (removed) stray gold star sprite that flashed at the top of the frame every
   // 250 frames - not part of the night sky, so it is gone
-  star5(ctx, 1675, 194, 12, 0.3, 0.9, tw(1, 0.15));
+  star5(ctx, 1675, 194, 12, 0.3, 0.9, starTwinkle(t, 1, 0.15));
   ctx.restore();
 }
 const SPATH = [[0, 1180], [8, 1049], [12, 999], [16, 901], [18, 878], [20, 760], [22, 744], [28, 627], [36, 480], [44, 350], [47, 330]];
-function shootPos(s) {
-  const ks = SPATH;   // read-only constant - was deep-copied (11 arrays) on every call
-  // linear interpolation on x then y from line
+const _shootP = [0, 0], _shootQ = [0, 0];
+function shootPos(s, out) {
+  const ks = SPATH;
   let x;
   if (s <= ks[0][0]) x = ks[0][1]; else {
     x = ks[ks.length - 1][1];
     for (let i = 0; i < ks.length - 1; i++) if (s <= ks[i + 1][0]) { const u = (s - ks[i][0]) / (ks[i + 1][0] - ks[i][0]); x = lerp(ks[i][1], ks[i + 1][1], u); break; }
   }
-  return [x, 40 + (1049 - x) * 0.5];
+  out[0] = x;
+  out[1] = 40 + (1049 - x) * 0.5;
+  return out;
 }
 function drawShooting(ctx, f) {
   const s = ((f - 60) % 118 + 118) % 118;
   if (s > 47) return;
   const fade = sstep(0, 3, s) * (1 - sstep(38, 47, s));
-  const p = shootPos(s), q = shootPos(Math.max(0, s - 7));
+  const p = shootPos(s, _shootP), q = shootPos(Math.max(0, s - 7), _shootQ);
   ctx.save();
   ctx.globalAlpha = fade * 0.55;
   const g = ctx.createLinearGradient(p[0], p[1], q[0], q[1]);
@@ -1581,15 +1591,16 @@ function mouseSprite() {
     x.beginPath(); x.moveTo(38, -4); x.lineTo(56, -16); x.stroke();
   });
 }
+const _mousePos = [0, 0], _mousePA = [0, 0], _mousePB = [0, 0];
 function drawMouse(ctx, p, t) {
   if (p < 28 || p > 91) return;
-  const pos = catmull(MPATH, p);
-  const pA = catmull(MPATH, Math.max(28, p - 0.5));
-  const pB = catmull(MPATH, Math.min(91, p + 0.5));
-  const ang = Math.atan2(pB[1] - pA[1], pB[0] - pA[0]) * 0.45 - 0.25;
+  catmull(MPATH, p, _mousePos);
+  catmull(MPATH, Math.max(28, p - 0.5), _mousePA);
+  catmull(MPATH, Math.min(91, p + 0.5), _mousePB);
+  const ang = Math.atan2(_mousePB[1] - _mousePA[1], _mousePB[0] - _mousePA[0]) * 0.45 - 0.25;
   const m = mouseSprite();
   ctx.save();
-  ctx.translate(pos[0], pos[1]); ctx.rotate(ang);
+  ctx.translate(_mousePos[0], _mousePos[1]); ctx.rotate(ang);
   ctx.drawImage(m.c, m.x, m.y, m.w, m.h);
   ctx.restore();
 }
@@ -1690,7 +1701,7 @@ function bunnyEarArt(ctx, e) {
    +/-0.05 rad sway sweep, which puts the tip about 8 units off-axis. */
 const EAR_PAD = 24;
 function earLocalBox(e) {
-  const [bx, by, tx, ty, w] = e;
+  const bx = e[0], by = e[1], tx = e[2], ty = e[3], w = e[4];
   const L = Math.hypot(tx - bx, ty - by), a = Math.atan2(ty - by, tx - bx);
   const ca = Math.cos(a), sa = Math.sin(a);
   const x0 = -25 - EAR_PAD, x1 = L + EAR_PAD;
@@ -1704,8 +1715,7 @@ function earLocalBox(e) {
   const x = Math.floor(minx), y = Math.floor(miny);
   return { x: x, y: y, w: Math.ceil(maxx) - x + 1, h: Math.ceil(maxy) - y + 1 };
 }
-function earSprite(e, key) {
-  const box = earLocalBox(e);
+function earSprite(e, box, key) {
   return bakedSprite(key, box, 0.5, x => {
     x.translate(e[0], e[1]);          // the ear's art is anchored at its base
     bunnyEarArt(x, e);
@@ -1990,8 +2000,11 @@ const EXPR = { t: 0, ex: 0, bb: 0, lk: 0, pb: 0 };
 const CK = [[0, 995, 345], [36, 995, 345], [40, 940, 268], [44, 892, 205], [48, 874, 186], [51, 874, 176], [53, 900, 235], [55, 960, 320], [57, 996, 352], [59, 996, 347], [61, 995, 347]];
 /* surprise-tick fan angles beside the sleepy cat */
 const TICK_ANGLES = [-0.9, -0.3, 0.3];
-const BL_EARS = { list: [[172, 246, 112, 98, 44], [232, 242, 198, 56, 44]], key: 'blear', phase: 0 };
-const BR_EARS = { list: [[578, 246, 552, 50, 44], [632, 246, 692, 46, 44]], key: 'brear', phase: 1 };
+const TICK_DIRS = TICK_ANGLES.map(an => [Math.cos(an - 1.4), Math.sin(an - 1.4)]);
+const BL_EAR_LIST = [[172, 246, 112, 98, 44], [232, 242, 198, 56, 44]];
+const BR_EAR_LIST = [[578, 246, 552, 50, 44], [632, 246, 692, 46, 44]];
+const BL_EARS = { list: BL_EAR_LIST, boxes: BL_EAR_LIST.map(earLocalBox), keys: ['blear0', 'blear1'], phase: 0 };
+const BR_EARS = { list: BR_EAR_LIST, boxes: BR_EAR_LIST.map(earLocalBox), keys: ['brear0', 'brear1'], phase: 1 };
 const PUTS = [
   { key: 'pink',  box: [390, 380, 280, 300],  anc: [520, 628],  i: 0, raw: x => drawPink(x, 0, 0, 0) },
   { key: 'bear',  box: [570, 320, 270, 300],  anc: [700, 585],  i: 1, raw: x => drawBear(x, 0, 1, 0) },
@@ -2017,7 +2030,7 @@ function put(ctx, t, key, d, bobv) {
     const sway = 0.05 * Math.sin(t * 2.2 + ears.phase);
     for (let n = 0; n < ears.list.length; n++) {
       const e = ears.list[n];
-      const sp = earSprite(e, ears.key + n);
+      const sp = earSprite(e, ears.boxes[n], ears.keys[n]);
       ctx.save();
       // the ear sprite is baked in body-local units; map them into stage space
       // exactly like the bunny's own sprite does (local(ctx, 760, 240, ...))
@@ -2035,6 +2048,8 @@ function put(ctx, t, key, d, bobv) {
 /* bounce when excited */
 function bob(i, t, e) { return e * (6 + 6 * Math.abs(Math.sin(t * 5.2 + i * 0.7))); }
 
+const _mouseGlow = [0, 0], _chickPos = [0, 0];
+
 /* ---------- main ---------- */
 function draw(ctx, t, view) {
   /* The sky + moon live in the static #bg layer now and are never redrawn here. */
@@ -2049,10 +2064,10 @@ function draw(ctx, t, view) {
   drawMouse(ctx, p, t);
   // mouse hiding behind the logo glows through
   if (p > 41 && p < 47.5) {
-    const mp = catmull(MPATH, p);
+    catmull(MPATH, p, _mouseGlow);
     ctx.save(); ctx.globalAlpha = 0.55 * sstep(41, 43, p) * (1 - sstep(45.5, 47.5, p));
-    ctx.fillStyle = rad(ctx, mp[0], mp[1], 0, 80, [[0, 'rgba(120,255,240,0.9)'], [1, 'rgba(120,255,240,0)']]);
-    ctx.beginPath(); ctx.arc(mp[0], mp[1], 80, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.fillStyle = rad(ctx, _mouseGlow[0], _mouseGlow[1], 0, 80, [[0, 'rgba(120,255,240,0.9)'], [1, 'rgba(120,255,240,0)']]);
+    ctx.beginPath(); ctx.arc(_mouseGlow[0], _mouseGlow[1], 80, 0, TAU); ctx.fill(); ctx.restore();
   }
 
   // blinks
@@ -2064,7 +2079,14 @@ function draw(ctx, t, view) {
   drawMoon(ctx, t, f, e, moonBlink);
 
   // chick
-  let cp = p < 36 || p > 61 ? [995, 345 + 2.5 * Math.sin(t * 2.6)] : catmull(CK, p);
+  let cp;
+  if (p < 36 || p > 61) {
+    _chickPos[0] = 995;
+    _chickPos[1] = 345 + 2.5 * Math.sin(t * 2.6);
+    cp = _chickPos;
+  } else {
+    cp = catmull(CK, p, _chickPos);
+  }
   const air = p > 38 && p < 56;
   const crot = air ? 0.12 * Math.sin(t * 9) : 0.03 * Math.sin(t * 2.2);
   drawChick(ctx, t, cp[0], cp[1], crot, chickBlink, air ? sstep(38, 42, p) * (1 - sstep(52, 55, p)) : 0);
@@ -2085,9 +2107,10 @@ function draw(ctx, t, view) {
   { const a = sstep(33, 36, p) * (1 - sstep(44, 48, p));
     if (a > 0.01) {
       ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = '#f4f8ff'; ctx.lineWidth = 5; ctx.lineCap = 'round';
-      for (const an of TICK_ANGLES) {
-        const ox = 585, oy = 372, r0 = 14 + 6 * (p - 33) / 10, r1 = r0 + 12;
-        ctx.beginPath(); ctx.moveTo(ox + Math.cos(an - 1.4) * r0, oy + Math.sin(an - 1.4) * r0); ctx.lineTo(ox + Math.cos(an - 1.4) * r1, oy + Math.sin(an - 1.4) * r1); ctx.stroke();
+      const ox = 585, oy = 372, r0 = 14 + 6 * (p - 33) / 10, r1 = r0 + 12;
+      for (let j = 0; j < TICK_DIRS.length; j++) {
+        const d = TICK_DIRS[j];
+        ctx.beginPath(); ctx.moveTo(ox + d[0] * r0, oy + d[1] * r0); ctx.lineTo(ox + d[0] * r1, oy + d[1] * r1); ctx.stroke();
       }
       ctx.restore();
     } }
@@ -2128,7 +2151,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, view: { x0: 0, y0: 0
     cv.width=cw; cv.height=ch;
     bg.width=cw; bg.height=ch;
     var sig=document.querySelector('.hero-signature');
-    var sigBottom = sig ? (sig.getBoundingClientRect().bottom + (window.pageYOffset || document.documentElement.scrollTop || 0)) : 0;
+    var sigBottom = sig ? (sig.getBoundingClientRect().bottom + (window.pageYOffset || (document.documentElement && document.documentElement.scrollTop) || 0)) : 0;
     var maxStageH = sigBottom > 0 ? Math.max(1, vh - sigBottom) : vh;
     var maxStagePx = maxStageH * dpr;
     s=Math.min(cw/1872, maxStagePx/1044);            // stage illustration never rises higher than .hero-signature
