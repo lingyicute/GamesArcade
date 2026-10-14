@@ -67,8 +67,9 @@
         linear-gradient(180deg, rgba(14, 23, 58, .20) 0%, rgba(17, 29, 72, .02) 42%, rgba(11, 28, 65, .24) 100%),
         radial-gradient(ellipse at 50% 15%, rgba(119, 139, 232, .08), transparent 48%);
     }
-    /* Static night sky + moon: painted once per resize, never per frame. */
-    #bg {
+    /* Paint once per resize, then present an immutable image. Even an unchanged
+       canvas can re-export its backing store when another layer animates. */
+    #bg, #bg-snapshot {
       position: fixed;
       z-index: -3;
       left: 0;
@@ -79,6 +80,7 @@
       height: 100dvh;
       pointer-events: none;
     }
+    #bg[hidden], #bg-snapshot[hidden] { display: none; }
     /* Only the animation's conservative paint bounds get a backing store.
        fit() sets its CSS rect on the same pixel grid as the full-size backdrop. */
     #c {
@@ -2192,6 +2194,44 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
   // FPS in Scene is the animation's timebase, not a display-rate target. Preserve
   // smooth 60Hz motion without doing 120/144/240 full draws per second on high-Hz panels.
   var frameMs=1000/60;
+  var skyGeneration=0, skyImage=null, skyURL=null;
+  function snapshotSky(){
+    var generation=++skyGeneration;
+    // Keep the freshly painted canvas visible until encoding AND decoding finish.
+    // This is also the fallback if snapshots are unavailable or fail.
+    bg.hidden=false;
+    if(skyImage) skyImage.hidden=true;
+    if(!bg.toBlob || !window.URL || !URL.createObjectURL) return;
+    try {
+      bg.toBlob(function(blob){
+        if(!blob || generation!==skyGeneration) return;
+        var url=URL.createObjectURL(blob), image=new Image();
+        image.id='bg-snapshot'; image.alt=''; image.setAttribute('aria-hidden','true');
+        image.decoding='async';
+        function discard(){ URL.revokeObjectURL(url); }
+        function install(){
+          if(generation!==skyGeneration){ discard(); return; }
+          if(skyImage) skyImage.replaceWith(image);
+          else bg.after(image);
+          skyImage=image;
+          if(skyURL) URL.revokeObjectURL(skyURL);
+          skyURL=url;
+          // A hidden full-resolution canvas still owns its backing store. Release
+          // it only after the decoded image is installed; fit() recreates it later.
+          bg.hidden=true;
+          bg.width=bg.height=1;
+        }
+        image.onerror=discard;
+        if(image.decode){
+          image.src=url;
+          image.decode().then(install,discard);
+        } else {
+          image.onload=install;
+          image.src=url;
+        }
+      },'image/png');
+    } catch(error) { /* Keep the canvas fallback (e.g. a tainted future asset). */ }
+  }
   function time(now){ return (elapsed+(running ? now-activeSince : 0))/1000; }
   function paint(now){
     ctx.setTransform(1,0,0,1,0,0);
@@ -2203,6 +2243,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
     // The opaque sky covers every pixel; clearing first is redundant.
     bgx.setTransform(s,0,0,s,ox,oy);
     Scene.drawStatic(bgx,Scene.view);
+    snapshotSky();
   }
   function fit(){
     var vw=Math.max(1,innerWidth), vh=Math.max(1,innerHeight);
