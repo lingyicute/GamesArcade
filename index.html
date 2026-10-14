@@ -79,16 +79,16 @@
       height: 100dvh;
       pointer-events: none;
     }
-    /* Animated overlay: the only layer that repaints every frame. */
+    /* Only the animation's conservative paint bounds get a backing store.
+       fit() sets its CSS rect on the same pixel grid as the full-size backdrop. */
     #c {
       position: fixed;
       z-index: -2;
       left: 0;
-      bottom: 0;
+      top: 0;
       display: block;
-      width: 100vw;
-      height: 100vh;
-      height: 100dvh;
+      width: 1px;
+      height: 1px;
       pointer-events: none;
       will-change: transform;
       transform: translateZ(0);
@@ -1240,6 +1240,8 @@
           loadingOverlay.remove();
           document.body.classList.remove("is-loading");
           pageRegions.forEach((region) => region.removeAttribute("inert"));
+          // Start the canvas only after the expensive full-screen blur is gone.
+          document.dispatchEvent(new Event("arcade:ready"));
         }, 400);
         if (playback && typeof playback.catch === "function") {
           playback.catch(() => {
@@ -2151,67 +2153,115 @@ function draw(ctx, t, view) {
   }
 }
 
-root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, view: { x0: 0, y0: 0, x1: W, y1: H } };
+/* Conservative union of animated paint, NOT the static moon. Includes the mouse's
+   rotated 184px aura, the shooting star's extended tail (above y=0), strokes and
+   antialiasing. Keep the bounds test in sync when adding/changing animation art. */
+const ANIMATION_BOUNDS = Object.freeze({ x0: -240, y0: -320, x1: 2150, y1: 840 });
+root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANIMATION_BOUNDS,
+  view: { x0: 0, y0: 0, x1: W, y1: H } };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 (function(){
   var cv=document.getElementById('c'), ctx=cv.getContext('2d');
-  // The static layer is fully covered by the sky gradient on every paint (the view rect
-  // always spans the whole bitmap), so it can be opaque: the compositor then skips
-  // per-pixel alpha blending of this full-viewport backdrop on every display frame.
   var bg=document.getElementById('bg'), bgx=bg.getContext('2d', {alpha:false});
-  var s=1, ox=0, oy=0, cw=1872, ch=1044, pending=0;
+  var s=1, ox=0, oy=0, cw=0, ch=0, ax=0, ay=0, aw=1, ah=1, pending=0;
+  var lastFit='', rafId=null, running=false, elapsed=0, activeSince=0, lastPaint=-Infinity;
+  var ready=!document.body.classList.contains('is-loading'), pageActive=true;
+  var motion=matchMedia('(prefers-reduced-motion: reduce)');
+  // FPS in Scene is the animation's timebase, not a display-rate target. Preserve
+  // smooth 60Hz motion without doing 120/144/240 full draws per second on high-Hz panels.
+  var frameMs=1000/60;
+  function time(now){ return (elapsed+(running ? now-activeSince : 0))/1000; }
+  function paint(now){
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,aw,ah);
+    ctx.setTransform(s,0,0,s,ox-ax,oy-ay);
+    Scene.draw(ctx,motion.matches ? 0 : time(now),Scene.view);
+  }
   function paintStatic(){
-    bgx.setTransform(1,0,0,1,0,0);
-    bgx.clearRect(0,0,cw,ch);
+    // The opaque sky covers every pixel; clearing first is redundant.
     bgx.setTransform(s,0,0,s,ox,oy);
     Scene.drawStatic(bgx,Scene.view);
   }
   function fit(){
     var vw=Math.max(1,innerWidth), vh=Math.max(1,innerHeight);
     var dpr=Math.min(window.devicePixelRatio||1,2);
-    var maxPx=6e6, px=vw*vh*dpr*dpr;                 // keep very large viewports affordable
+    var maxPx=6e6, px=vw*vh*dpr*dpr;
     if(px>maxPx) dpr*=Math.sqrt(maxPx/px);
-    cw=Math.round(vw*dpr); ch=Math.round(vh*dpr);
-    cv.width=cw; cv.height=ch;
-    bg.width=cw; bg.height=ch;
+    var nextW=Math.round(vw*dpr), nextH=Math.round(vh*dpr);
     var sig=document.querySelector('.hero-signature');
-    var sigBottom = sig ? (sig.getBoundingClientRect().bottom + (window.pageYOffset || (document.documentElement && document.documentElement.scrollTop) || 0)) : 0;
-    var maxStageH = sigBottom > 0 ? Math.max(1, vh - sigBottom) : vh;
-    var maxStagePx = maxStageH * dpr;
-    s=Math.min(cw/1872, maxStagePx/1044);            // stage illustration never rises higher than .hero-signature
-    ox=(cw-1872*s)/2; oy=ch-1044*s;                  // centred, pinned to the bottom edge
-    var eps=1e-6, v=Scene.view;                       // rect of stage space the canvas shows
+    var sigBottom=sig ? sig.getBoundingClientRect().bottom+window.pageYOffset : 0;
+    var maxStageH=sigBottom>0 ? Math.max(1,vh-sigBottom) : vh;
+    var nextS=Math.min(nextW/Scene.W,maxStageH*dpr/Scene.H);
+    // fonts.ready, resize and orientationchange can all describe the same geometry.
+    // Don't reset canvas state/backing stores or invalidate sprites in that case.
+    var key=[vw,vh,nextW,nextH,nextS].join('/');
+    if(key===lastFit) return;
+    lastFit=key;
+    cw=nextW; ch=nextH; s=nextS;
+    ox=(cw-Scene.W*s)/2; oy=ch-Scene.H*s;
+    var b=Scene.animationBounds;
+    // Outward device-pixel rounding + 2px safety margin avoids AA edge clipping.
+    ax=Math.max(0,Math.floor(ox+b.x0*s)-2);
+    ay=Math.max(0,Math.floor(oy+b.y0*s)-2);
+    aw=Math.max(1,Math.min(cw,Math.ceil(ox+b.x1*s)+2)-ax);
+    ah=Math.max(1,Math.min(ch,Math.ceil(oy+b.y1*s)+2)-ay);
+    if(cv.width!==aw) cv.width=aw;
+    if(cv.height!==ah) cv.height=ah;
+    if(bg.width!==cw) bg.width=cw;
+    if(bg.height!==ch) bg.height=ch;
+    // Use the actual rounded backing-store ratios, not dpr, for pixel registration.
+    cv.style.left=(ax*vw/cw)+'px'; cv.style.top=(ay*vh/ch)+'px';
+    cv.style.width=(aw*vw/cw)+'px'; cv.style.height=(ah*vh/ch)+'px';
+    var eps=1e-6, v=Scene.view;
     v.x0=Math.floor(-ox/s-eps); v.y0=Math.floor(-oy/s-eps);
     v.x1=Math.ceil((cw-ox)/s+eps); v.y1=Math.ceil((ch-oy)/s+eps);
-    Scene.setSpriteScale(Math.min(2, Math.max(0.5, s)));
+    Scene.setSpriteScale(Math.min(2,Math.max(0.5,s)));
     paintStatic();
+    paint(performance.now()); // also paints once while loading / reduced-motion / paused
   }
-  function schedule(){ if(pending) clearTimeout(pending); pending=setTimeout(function(){ pending=0; fit(); },120); }
-  addEventListener('resize',schedule); addEventListener('orientationchange',schedule);
-  if(document.fonts && document.fonts.ready) { document.fonts.ready.then(fit); }
-  fit();
-  var t0=performance.now(), running=true, rafId=null;
+  function schedule(){
+    if(pending) clearTimeout(pending);
+    pending=setTimeout(function(){ pending=0; fit(); },120);
+  }
   function loop(now){
-    if (!running) return;
-    ctx.setTransform(1,0,0,1,0,0);
-    ctx.clearRect(0,0,cw,ch);
-    ctx.setTransform(s,0,0,s,ox,oy);                 // stage units -> device pixels
-    Scene.draw(ctx,(now-t0)/1000,Scene.view);
-    rafId = requestAnimationFrame(loop);
-  }
-  document.addEventListener('visibilitychange', function() {
-    if (document.hidden) {
-      running = false;
-      if (rafId) cancelAnimationFrame(rafId);
-    } else {
-      if (!running) {
-        running = true;
-        rafId = requestAnimationFrame(loop);
-      }
+    rafId=null;
+    if(!running) return;
+    var delta=now-lastPaint;
+    // Small tolerance accommodates rAF timestamp jitter on nominal 60Hz screens.
+    if(delta>=frameMs-0.5){
+      paint(now);
+      lastPaint=Number.isFinite(lastPaint) ? now-Math.max(0,delta%frameMs) : now;
+      // Avoid a near-full-interval remainder after accepting an early frame.
+      if(now-lastPaint>frameMs-0.5) lastPaint=now;
     }
-  });
-  rafId = requestAnimationFrame(loop);
+    rafId=requestAnimationFrame(loop);
+  }
+  function sync(){
+    var shouldRun=ready && pageActive && !document.hidden && !motion.matches;
+    if(shouldRun===running) return;
+    var now=performance.now();
+    if(shouldRun){
+      activeSince=now; lastPaint=-Infinity; running=true;
+      rafId=requestAnimationFrame(loop);
+    } else {
+      elapsed+=now-activeSince; running=false;
+      if(rafId!==null) cancelAnimationFrame(rafId);
+      rafId=null;
+    }
+  }
+  addEventListener('resize',schedule);
+  addEventListener('orientationchange',schedule);
+  document.addEventListener('arcade:ready',function(){ ready=true; sync(); });
+  document.addEventListener('visibilitychange',sync);
+  addEventListener('pagehide',function(){ pageActive=false; sync(); });
+  addEventListener('pageshow',function(){ pageActive=true; fit(); sync(); });
+  function motionChanged(){ sync(); paint(performance.now()); }
+  if(motion.addEventListener) motion.addEventListener('change',motionChanged);
+  else motion.addListener(motionChanged);
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+  fit();
+  sync();
 })();
 </script>
 </body>
