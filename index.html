@@ -1308,7 +1308,7 @@ function rad(ctx, x, y, r0, r1, stops, x1, y1) {
   return g;
 }
 function local(ctx, ox, oy, fn) { ctx.save(); ctx.translate(ox, oy); ctx.scale(0.5, 0.5); fn(); ctx.restore(); }
-let NOSQ = false;
+let NOSQ = false, BODY_SHADOW_SCALE = 1;
 function squash(ctx, ax, ay, sx, sy, dy) {
   if (NOSQ) return;
   ctx.translate(ax, ay + (dy || 0)); ctx.scale(sx, sy); ctx.translate(-ax, -ay);
@@ -1317,7 +1317,7 @@ function ell(ctx, x, y, rx, ry, rot) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry
 function body(ctx, pathFn, fill, stroke, lw, glow, blur) {
   ctx.save();
   pathFn();
-  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = blur; }
+  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = blur * BODY_SHADOW_SCALE; }
   ctx.fillStyle = fill; ctx.fill();
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
   if (stroke) { ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.lineJoin = 'round'; ctx.stroke(); }
@@ -1408,14 +1408,26 @@ function mk(w, h) {
   return root.__mkCanvas(w, h);
 }
 function sprite(key, bx, by, bw, bh, fn) {
-  let c = CACHE[key];
-  if (!c) {
-    c = CACHE[key] = mk(bw, bh);
+  // Downsample for small stages; never exceed the original 1x body resolution.
+  // Large/high-DPI views retain the original detail without growing the cache.
+  const ss = Math.min(1, SPRITE_SS.v), k = 'body:' + key + '@' + ss;
+  let entry = CACHE[k];
+  if (!entry) {
+    // Snap outward to a shared device-pixel grid. Retain logical coordinates so
+    // changing density never stretches the art or shifts its animation anchor.
+    const x0 = Math.floor(bx * ss), y0 = Math.floor(by * ss);
+    const c = mk(Math.ceil((bx + bw) * ss) - x0, Math.ceil((by + bh) * ss) - y0);
     const x = c.getContext('2d');
-    x.translate(-bx, -by);
-    NOSQ = true; fn(x); NOSQ = false;
+    x.setTransform(ss, 0, 0, ss, -x0, -y0);
+    const oldSq = NOSQ, oldShadow = BODY_SHADOW_SCALE;
+    NOSQ = true;
+    // Canvas shadowBlur ignores the CTM: scale it explicitly, otherwise a small
+    // sprite would grow a large halo when blitted back into stage coordinates.
+    BODY_SHADOW_SCALE = ss;
+    try { fn(x); } finally { NOSQ = oldSq; BODY_SHADOW_SCALE = oldShadow; }
+    entry = CACHE[k] = { c, x: x0 / ss, y: y0 / ss, w: c.width / ss, h: c.height / ss };
   }
-  return c;
+  return entry;
 }
 /* Sprite density, in device pixels per stage unit. Baked art is authored in stage
    units, but the stage is scaled to the viewport, so a 1:1 sprite would be upscaled
@@ -1428,8 +1440,8 @@ const SPRITE_SS = { v: 1 };
      box        {x, y, w, h} bounding box, in the units the caller blits in
      unitScale  stage units per box unit at the blit point (0.5 inside a bunny's or the
                 chick's body-local frame, 1 for anything drawn in stage units). Box units
-                reach the screen at unitScale * stage scale device pixels each, which is
-                the density the art is rasterised at - 1:1, no resampling.
+                are rasterised at unitScale * cached density device pixels each.
+                The density bucket rounds up slightly to avoid undersampling.
      fn         draws the art, with the canvas origin moved to the box's corner
    Blit with the returned rect, in box units:
      const s = bakedSprite(...); ctx.drawImage(s.c, s.x, s.y, s.w, s.h); */
@@ -1451,8 +1463,15 @@ function bakedSprite(key, box, unitScale, fn) {
   return entry;
 }
 function setSpriteScale(ss) {
+  // Round UP to a 1/8-device-pixel density bucket: never undersample the requested
+  // scale, and avoid rebuilding every expression for tiny viewport changes.
+  ss = Math.ceil(clamp(ss, 0.5, 2) * 8) / 8;
   if (ss === SPRITE_SS.v) return;
-  for (const k in CACHE) if (k.indexOf('@') >= 0) delete CACHE[k];
+  const bodySuffix = '@' + Math.min(1, ss);
+  for (const k in CACHE) {
+    // A body already at its 1x cap also survives changes between larger scales.
+    if (k.indexOf('@') >= 0 && !(k.startsWith('body:') && k.endsWith(bodySuffix))) delete CACHE[k];
+  }
   SPRITE_SS.v = ss;
 }
 
@@ -2033,14 +2052,16 @@ const BR_EAR_LIST = [[578, 246, 552, 50, 44], [632, 246, 692, 46, 44]];
 const BL_EARS = { list: BL_EAR_LIST, boxes: BL_EAR_LIST.map(earLocalBox), keys: ['blear0', 'blear1'], phase: 0 };
 const BR_EARS = { list: BR_EAR_LIST, boxes: BR_EAR_LIST.map(earLocalBox), keys: ['brear0', 'brear1'], phase: 1 };
 const PUTS = [
-  { key: 'pink',  box: [390, 380, 280, 300],  anc: [520, 628],  i: 0, raw: x => drawPink(x, 0, 0, 0) },
-  { key: 'bear',  box: [570, 320, 270, 300],  anc: [700, 585],  i: 1, raw: x => drawBear(x, 0, 1, 0) },
-  { key: 'bl',    box: [735, 235, 280, 350],  anc: [870, 552],  i: 2, ears: BL_EARS, expr: 1,
+  // Alpha bounds of all three expressions, plus a transparent 2px border for
+  // bilinear sampling. In particular, ears no longer belong in the body bitmaps.
+  { key: 'pink',  box: [408, 402, 239, 259], anc: [520, 628],  i: 0, raw: x => drawPink(x, 0, 0, 0) },
+  { key: 'bear',  box: [579, 330, 238, 271], anc: [700, 585],  i: 1, raw: x => drawBear(x, 0, 1, 0) },
+  { key: 'bl',    box: [754, 340, 235, 233], anc: [870, 552],  i: 2, ears: BL_EARS, expr: 1,
     raw: x => drawBunnyL(x, EXPR.t, 2, 0, EXPR.ex, EXPR.bb, [-3 * EXPR.lk, -5 * EXPR.lk]) },
-  { key: 'br',    box: [925, 235, 260, 350],  anc: [1050, 552], i: 3, ears: BR_EARS, expr: 1,
+  { key: 'br',    box: [931, 340, 235, 234], anc: [1050, 552], i: 3, ears: BR_EARS, expr: 1,
     raw: x => drawBunnyR(x, EXPR.t, 3, 0, EXPR.ex, EXPR.bb, [-3 * EXPR.lk, -5 * EXPR.lk]) },
-  { key: 'panda', box: [1110, 320, 270, 290], anc: [1225, 575], i: 4, raw: x => drawPanda(x, 0, 4, 0) },
-  { key: 'pur',   box: [1235, 410, 230, 250], anc: [1325, 618], i: 5, expr: 2,
+  { key: 'panda', box: [1114, 331, 240, 262], anc: [1225, 575], i: 4, raw: x => drawPanda(x, 0, 4, 0) },
+  { key: 'pur',   box: [1245, 416, 201, 223], anc: [1325, 618], i: 5, expr: 2,
     raw: x => drawPurple(x, 0, 5, 0, EXPR.ex, EXPR.pb === 1) }
 ];
 /* Blit one cached character. Static art is rasterised once (see sprite()); everything
@@ -2069,7 +2090,7 @@ function put(ctx, t, key, d, bobv) {
       ctx.restore();
     }
   }
-  ctx.drawImage(c, box[0], box[1]);
+  ctx.drawImage(c.c, c.x, c.y, c.w, c.h);
   ctx.restore();
 }
 /* bounce when excited */
@@ -2252,7 +2273,13 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
   }
   addEventListener('resize',schedule);
   addEventListener('orientationchange',schedule);
-  document.addEventListener('arcade:ready',function(){ ready=true; sync(); });
+  document.addEventListener('arcade:ready',function(){
+    ready=true;
+    // fonts.ready may have measured hero-copy during its entrance transform.
+    // Settle geometry once before animating instead of carrying that stale size.
+    fit();
+    sync();
+  });
   document.addEventListener('visibilitychange',sync);
   addEventListener('pagehide',function(){ pageActive=false; sync(); });
   addEventListener('pageshow',function(){ pageActive=true; fit(); sync(); });
