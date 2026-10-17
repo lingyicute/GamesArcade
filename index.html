@@ -42,6 +42,7 @@
     }
 
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html { min-width: 320px; background: #273569; scroll-behavior: smooth; -webkit-tap-highlight-color: transparent; }
     body {
       position: relative;
@@ -825,16 +826,16 @@
     }
   </style>
 </head>
-<body class="is-loading">
+<body>
   <canvas id="bg" aria-hidden="true"></canvas>
   <canvas id="c" aria-hidden="true"></canvas>
 
-  <button class="loading-overlay is-loading" id="loadingOverlay" type="button" disabled aria-live="polite" aria-label="正在载入页面资源">
+  <button class="loading-overlay is-loading" id="loadingOverlay" type="button" hidden disabled aria-live="polite" aria-label="正在载入页面资源">
     <span class="loading-spinner" aria-hidden="true"></span>
     <span class="loading-prompt">请轻点任意位置</span>
   </button>
 
-  <header class="site-header" inert>
+  <header class="site-header">
     <a class="brand" href="#top" aria-label="lingyicute，回到首页">
       <span class="brand-mark" aria-hidden="true">✦</span>
       <span class="brand-word">lingyicute's Games Arcade</span>
@@ -844,7 +845,7 @@
       <a href="#games">星图<span class="nav-count">11</span></a>
       <a href="#about">关于我</a>
     </nav>
-    <button class="music-button" id="musicToggle" type="button" aria-pressed="false" aria-label="开启背景音乐" title="开启背景音乐">
+    <button class="music-button" id="musicToggle" type="button" hidden aria-pressed="false" aria-label="开启背景音乐" title="开启背景音乐">
       <svg class="speaker-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path class="speaker-body" d="M3.5 9v6h4.2l5.1 4V5l-5.1 4H3.5z"/>
         <path class="speaker-wave" d="M16 9.25a4 4 0 0 1 0 5.5M18.4 6.8a7.5 7.5 0 0 1 0 10.4"/>
@@ -853,7 +854,7 @@
     </button>
   </header>
 
-  <main inert>
+  <main>
     <section class="hero" id="top" aria-labelledby="hero-title">
       <div class="hero-copy">
         <p class="eyebrow">✦ A LITTLE ARCADE OF MY GAMES ✦</p>
@@ -877,7 +878,7 @@
             <p class="eyebrow section-eyebrow"><span class="eyebrow-star" aria-hidden="true">✦</span> THE ARCADE</p>
             <h2 class="collection-title zh" id="collection-title">想玩什么？<br><em>这些任你选</em></h2>
           </div>
-          <div class="filters" role="group" aria-label="按游戏类型筛选">
+          <div class="filters" hidden role="group" aria-label="按游戏类型筛选">
             <button class="filter-button" type="button" data-filter="all" aria-pressed="true">全部 <span class="filter-count">11</span></button>
             <button class="filter-button" type="button" data-filter="material" aria-pressed="false">Material You <span class="filter-count">09</span></button>
             <button class="filter-button" type="button" data-filter="classic" aria-pressed="false">经典重制 <span class="filter-count">02</span></button>
@@ -1101,7 +1102,7 @@
     </section>
   </main>
 
-  <footer class="site-footer" inert>
+  <footer class="site-footer">
     <span>© 2026 lingyicute</span>
     <span class="footer-love">Made with curiosity &amp; a little love</span>
     <a class="footer-top" href="#top">回到星空 ↑</a>
@@ -1132,18 +1133,25 @@
         status.textContent = `正在显示${label}的 ${visible} 款游戏。`;
       }
       filterButtons.forEach((button) => button.addEventListener("click", () => applyFilter(button.dataset.filter)));
+      document.querySelector(".filters").hidden = false;
 
       const audio = document.getElementById("ambience");
       const musicButton = document.getElementById("musicToggle");
       const loadingOverlay = document.getElementById("loadingOverlay");
       const pageRegions = [...document.querySelectorAll("header.site-header, main, footer.site-footer")];
+      // Progressive enhancement: a static visit must never be trapped behind
+      // a disabled overlay or inert content when JavaScript is unavailable.
+      document.body.classList.add("is-loading");
+      pageRegions.forEach((region) => region.setAttribute("inert", ""));
+      loadingOverlay.hidden = false;
+      musicButton.hidden = false;
       const loadingStartedAt = performance.now();
       const minimumSpinnerMs = 500;
       let resourcesReady = false;
       let experienceStarted = false;
 
       audio.volume = 0.3;
-      audio.muted = false; // Never persisted: every fresh visit starts unmuted.
+      // Never persist music preference; each entry gesture requests playback.
       audio.preload = "auto";
 
       function reflectMuted(isMuted) {
@@ -1154,7 +1162,30 @@
         musicButton.setAttribute("aria-label", label);
         musicButton.title = label;
       }
-      reflectMuted(false);
+      reflectMuted(true); // No playback has been requested before the entry gesture.
+      let playbackGeneration = 0;
+      function playbackFailed() {
+        reflectMuted(true);
+        musicButton.setAttribute("aria-label", "音乐暂不可用，点击扬声器重试");
+        musicButton.title = "音乐暂不可用，点击扬声器重试";
+      }
+      function requestPlayback() {
+        const generation = ++playbackGeneration;
+        reflectMuted(false);
+        const fail = () => {
+          // An old play() rejection must not override a newer click or retry.
+          if (generation === playbackGeneration) playbackFailed();
+        };
+        // Keep play() directly inside the user's gesture for autoplay policies.
+        try {
+          const playback = audio.play();
+          if (playback && typeof playback.catch === "function") playback.catch(fail);
+        } catch (error) { fail(); }
+      }
+      audio.addEventListener("error", () => {
+        ++playbackGeneration;
+        playbackFailed();
+      });
 
       function waitForAudio() {
         return new Promise((resolve) => {
@@ -1230,11 +1261,8 @@
       function startExperience() {
         if (!resourcesReady || experienceStarted) return;
         experienceStarted = true;
-        reflectMuted(false);
-        // Call play() directly inside the user's click/tap gesture to satisfy browser autoplay rules.
-        let playback;
-        try { playback = audio.play(); }
-        catch (error) { playback = Promise.reject(error); }
+        const transferFocus = document.activeElement === loadingOverlay;
+        requestPlayback();
         loadingOverlay.classList.add("is-dismissed");
         loadingOverlay.disabled = true;
         loadingOverlay.setAttribute("aria-hidden", "true");
@@ -1242,46 +1270,33 @@
           loadingOverlay.remove();
           document.body.classList.remove("is-loading");
           pageRegions.forEach((region) => region.removeAttribute("inert"));
+          if (transferFocus && document.activeElement === document.body) {
+            document.querySelector(".brand").focus({ preventScroll: true });
+          }
           // Start the canvas only after the expensive full-screen blur is gone.
           document.dispatchEvent(new Event("arcade:ready"));
         }, 400);
-        if (playback && typeof playback.catch === "function") {
-          playback.catch(() => {
-            reflectMuted(true);
-            musicButton.setAttribute("aria-label", "音乐暂不可用，点击扬声器重试");
-            musicButton.title = "音乐暂不可用，点击扬声器重试";
-          });
-        }
       }
       loadingOverlay.addEventListener("click", startExperience);
 
       musicButton.addEventListener("click", () => {
         if (!experienceStarted) return;
-        const nextMuted = !audio.muted;
-        reflectMuted(nextMuted);
-        if (!nextMuted && audio.paused) {
-          let playback;
-          try { playback = audio.play(); }
-          catch (error) { playback = Promise.reject(error); }
-          if (playback && typeof playback.catch === "function") {
-            playback.catch(() => {
-              reflectMuted(true);
-              musicButton.setAttribute("aria-label", "音乐暂不可用，请再试一次");
-              musicButton.title = "音乐暂不可用，请再试一次";
-            });
-          }
+        if (audio.muted) {
+          requestPlayback();
+        } else {
+          ++playbackGeneration;
+          reflectMuted(true);
         }
       });
 
       cards.forEach((card) => {
-        let rect = null;
-        card.addEventListener("pointerenter", () => { rect = card.getBoundingClientRect(); }, { passive: true });
         card.addEventListener("pointermove", (event) => {
-          if (!rect) rect = card.getBoundingClientRect();
+          // Scrolling, resizing and the hover transform can all change this rect
+          // without a pointerleave. Read current viewport coordinates before writes.
+          const rect = card.getBoundingClientRect();
           card.style.setProperty("--mx", `${event.clientX - rect.left}px`);
           card.style.setProperty("--my", `${event.clientY - rect.top}px`);
         }, { passive: true });
-        card.addEventListener("pointerleave", () => { rect = null; }, { passive: true });
       });
     })();
   </script>
@@ -1453,14 +1468,20 @@ function bakedSprite(key, box, unitScale, fn) {
   const k = key + '@' + ss;
   let entry = CACHE[k];
   if (!entry) {
-    const c = mk(Math.max(1, Math.ceil(box.w * dens)), Math.max(1, Math.ceil(box.h * dens)));
-    NOSQ = true;
+    // Keep rounded backing pixels and logical blit dimensions on the same grid.
+    // Blitting a ceil-rounded canvas into box.w/box.h would shrink its artwork.
+    const x0 = Math.floor(box.x * dens), y0 = Math.floor(box.y * dens);
+    const c = mk(Math.max(1, Math.ceil((box.x + box.w) * dens) - x0),
+                 Math.max(1, Math.ceil((box.y + box.h) * dens) - y0));
     const x = c.getContext('2d');
-    x.scale(dens, dens);
-    x.translate(-box.x, -box.y);
-    fn(x);
-    NOSQ = false;
-    entry = CACHE[k] = { c: c, x: box.x, y: box.y, w: box.w, h: box.h };
+    x.setTransform(dens, 0, 0, dens, -x0, -y0);
+    const oldSq = NOSQ, oldShadow = BODY_SHADOW_SCALE;
+    NOSQ = true;
+    // Like body sprites, shadows are authored in device pixels at stage scale 1.
+    // shadowBlur ignores the CTM (including unitScale), so apply stage density.
+    BODY_SHADOW_SCALE = ss;
+    try { fn(x); } finally { NOSQ = oldSq; BODY_SHADOW_SCALE = oldShadow; }
+    entry = CACHE[k] = { c, x: x0 / dens, y: y0 / dens, w: c.width / dens, h: c.height / dens };
   }
   return entry;
 }
@@ -1732,7 +1753,7 @@ function bunnyEarArt(ctx, e) {
   ctx.bezierCurveTo(L * 1.00, -w * 0.18, L * 1.00, w * 0.15, L * 0.82, w * 0.25);
   ctx.bezierCurveTo(L * 0.52, w * 0.52, L * 0.26, w * 0.42, -25, w * 0.16);
   ctx.closePath();
-  ctx.shadowColor = 'rgba(190,255,60,0.7)'; ctx.shadowBlur = 12;
+  ctx.shadowColor = 'rgba(190,255,60,0.7)'; ctx.shadowBlur = 12 * BODY_SHADOW_SCALE;
   ctx.fillStyle = lin(ctx, 0, -w, 0, w, [[0, '#c4f53a'], [1, '#8fe014']]); ctx.fill();
   ctx.shadowBlur = 0; ctx.strokeStyle = '#7fcb0a'; ctx.lineWidth = 4; ctx.stroke();
   ctx.fillStyle = 'rgba(220,255,120,0.55)';
@@ -2191,6 +2212,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
   var lastFit='', rafId=null, running=false, elapsed=0, activeSince=0, lastPaint=-Infinity;
   var ready=!document.body.classList.contains('is-loading'), pageActive=true;
   var motion=matchMedia('(prefers-reduced-motion: reduce)');
+  var reducedMotion=motion.matches;
   // FPS in Scene is the animation's timebase, not a display-rate target. Preserve
   // smooth 60Hz motion without doing 120/144/240 full draws per second on high-Hz panels.
   var frameMs=1000/60;
@@ -2237,7 +2259,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
     ctx.setTransform(1,0,0,1,0,0);
     ctx.clearRect(0,0,aw,ah);
     ctx.setTransform(s,0,0,s,ox-ax,oy-ay);
-    Scene.draw(ctx,motion.matches ? 0 : time(now),Scene.view);
+    Scene.draw(ctx,reducedMotion ? 0 : time(now),Scene.view);
   }
   function paintStatic(){
     // The opaque sky covers every pixel; clearing first is redundant.
@@ -2300,7 +2322,10 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
     rafId=requestAnimationFrame(loop);
   }
   function sync(){
-    var shouldRun=ready && pageActive && !document.hidden && !motion.matches;
+    // Read media state on lifecycle/change events, not during every paint. Apart
+    // from avoiding a style query per frame, this leaves change delivery to the UA.
+    reducedMotion=motion.matches;
+    var shouldRun=ready && pageActive && !document.hidden && !reducedMotion;
     if(shouldRun===running) return;
     var now=performance.now();
     if(shouldRun){
