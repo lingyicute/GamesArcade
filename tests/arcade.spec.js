@@ -22,7 +22,9 @@ test('without JavaScript the catalog and navigation remain usable', async ({ bro
   await page.goto('http://127.0.0.1:8000/');
   await expect(page.locator('#loadingOverlay')).toBeHidden();
   await expect(page.locator('[inert]')).toHaveCount(0);
-  await expect(page.locator('.game-card:visible')).toHaveCount(11);
+  // 13 cards: 11 Material You + 2 classic remakes, as the nav, filter buttons and
+  // group headings declare. Without JavaScript nothing is hidden, so all of them show.
+  await expect(page.locator('.game-card:visible')).toHaveCount(13);
   await expect(page.locator('.filters')).toBeHidden();
   await expect(page.locator('#musicToggle')).toBeHidden();
   await page.locator('.button-primary').click();
@@ -34,7 +36,34 @@ test('filtering keeps counts, groups and accessible button states consistent', a
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await enter(page);
-  for (const [filter, count, groups] of [['classic', 2, 1], ['material', 9, 1], ['all', 11, 2]]) {
+
+  // The catalog size is declared four times in the markup (nav, filter buttons, group
+  // headings, hero copy). Read those back and assert the filter agrees with them, so a
+  // catalog edit cannot leave the declared counts disagreeing with what is shown.
+  const declared = await page.evaluate(() => {
+    const digits = node => Number(String(node.textContent).replace(/\D/g, ''));
+    const buttons = [...document.querySelectorAll('[data-filter]')];
+    return {
+      total: digits(document.querySelector('.site-nav .nav-count')),
+      perFilter: Object.fromEntries(buttons.map(b => [b.dataset.filter, digits(b.querySelector('.filter-count'))])),
+      perGroup: [...document.querySelectorAll('.game-group')].map(g => ({
+        kind: g.dataset.group,
+        declared: digits(g.querySelector('.group-count')),
+        cards: g.querySelectorAll('.game-card').length,
+      })),
+    };
+  });
+  expect(declared.total).toBe(13); // 11 Material You + 2 classic remakes.
+  expect(declared.perFilter.all).toBe(declared.total);
+  expect(declared.perFilter.material + declared.perFilter.classic).toBe(declared.total);
+  for (const group of declared.perGroup) {
+    expect(group.cards).toBe(group.declared);
+    expect(group.cards).toBe(declared.perFilter[group.kind]);
+  }
+
+  for (const filter of ['classic', 'material', 'all']) {
+    const count = declared.perFilter[filter];
+    const groups = filter === 'all' ? declared.perGroup.length : 1;
     await page.locator(`[data-filter="${filter}"]`).click();
     await expect(page.locator('.game-card:visible')).toHaveCount(count);
     await expect(page.locator('.game-group:visible')).toHaveCount(groups);
