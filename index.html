@@ -1268,13 +1268,15 @@
 
       const fontsReady = (async () => {
         if (!document.fonts) return;
-        try {
-          await Promise.all([
-            document.fonts.load('400 16px "Pacifico Local"', "lingyicute"),
-            document.fonts.load('400 16px "Nebulove"', "你好，数独")
-          ]);
-          await document.fonts.ready;
-        } catch (error) { /* Use the browser fallback if a font cannot be loaded. */ }
+        // Each probe is awaited on its own. A face that cannot shape its probe text, or
+        // that failed to download, rejects - and that must not skip document.fonts.ready:
+        // the other face may still be loading, and the entry overlay would otherwise
+        // unlock before the webfonts are applied, shifting the layout right after entry.
+        await Promise.all([
+          document.fonts.load('400 16px "Pacifico Local"', "lingyicute").catch(() => {}),
+          document.fonts.load('400 16px "Nebulove"', "你好，数独").catch(() => {})
+        ]);
+        await document.fonts.ready;
       })();
       const imagesReady = Promise.all([...document.images].map(waitForImage));
       const audioReady = waitForAudio();
