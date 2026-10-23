@@ -168,7 +168,6 @@
     .loading-overlay.is-ready .loading-prompt { opacity: 1; visibility: visible; transform: translateY(0) scale(1); transition-delay: 0s; }
     .zh { font-family: var(--page-font); font-weight: 400; }
     .script { font-family: var(--page-font); font-weight: 400; }
-    .wrap { width: min(1260px, calc(100% - 64px)); margin-inline: auto; }
 
     /* Header */
     .site-header {
@@ -427,7 +426,6 @@
       letter-spacing: .02em;
     }
     .collection-title em { color: #ffe39a; font-style: normal; }
-    .collection-lede { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.8; }
     .filters {
       display: flex;
       flex: 0 0 auto;
@@ -668,7 +666,6 @@
     .tetris-board .violet { background: #b390f4; }
     .tetris-board .coral { background: #ff9c98; }
     .tetris-board .yellow { background: #f5ce69; }
-    .tetris-board .lime { background: #9ddb7d; }
     .gomoku-board { position: relative; z-index: 2; display: grid; width: 116px; height: 116px; grid-template-columns: repeat(7, minmax(0, 1fr)); grid-template-rows: repeat(7, minmax(0, 1fr)); gap: 3px; padding: 7px; border: 1px solid rgba(255,255,255,.55); border-radius: 16px; background: rgba(74,59,111,.46); box-shadow: 0 9px 14px rgba(24,22,67,.2); transform: rotate(3deg); }
     .gomoku-board span { position: relative; display: grid; min-width: 0; min-height: 0; place-items: center; border-radius: 4px; background: rgba(255,255,255,.48); box-shadow: inset 0 1px 0 rgba(255,255,255,.26); }
     .gomoku-board span::after { width: 10px; height: 10px; content: ""; border-radius: 50%; opacity: 0; transform: scale(.4); }
@@ -701,7 +698,6 @@
     .flappy-scene .cloud::before { left: 10px; width: 22px; height: 22px; }
     .flappy-scene .cloud::after { right: 9px; width: 16px; height: 16px; }
     .flappy-bird { position: absolute; z-index: 3; top: 55px; left: 39%; display: block; width: 52px; height: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; image-rendering: pixelated; filter: drop-shadow(0 3px 2px rgba(44,57,91,.22)); transform: rotate(-9deg);}
-    @keyframes bird-float { to { transform: translateY(-5px) rotate(4deg); } }
     .pipe { position: absolute; z-index: 2; right: 24%; width: 25px; border: 2px solid rgba(255,255,255,.68); border-radius: 5px; background: linear-gradient(90deg,#88d98b,#59b978); box-shadow: inset -5px 0 rgba(32,100,89,.1), 0 3px 8px rgba(31,74,88,.14); }
     .pipe::after { position: absolute; left: -6.3px; width: 31px; height: 10px; content: ""; border: 2px solid rgba(255,255,255,.62); border-radius: 4px; background: #72ca7d; }
     .pipe.top { top: 0; height: 49px; }
@@ -709,7 +705,6 @@
     .pipe.bottom { bottom: 13px; height: 43px; }
     .pipe.bottom::after { top: -4px; }
     .flappy-ground { position: absolute; right: 0; bottom: 0; left: 0; height: 11px; border-top: 3px solid rgba(255,255,255,.85); background: #dbd991; }
-    .pixel-score { position: absolute; top: 17px; right: 17px; color: rgba(255,255,255,.87); font-family: var(--page-font); font-size: 10px; font-weight: 900; text-shadow: 0 2px 7px rgba(43,80,122,.4); }
     .penguin-scene { position: absolute; z-index: 1; inset: 0; overflow: hidden; background: linear-gradient(145deg, rgba(171,228,255,.35), rgba(234,244,255,.14)); }
     .ice-track { position: absolute; top: -20px; bottom: -20px; left: 48%; width: 87px; border-inline: 2px solid rgba(255,255,255,.5); background: linear-gradient(90deg, rgba(255,255,255,.02), rgba(255,255,255,.38), rgba(255,255,255,.03)); transform: rotate(19deg); }
     .speed-line { position: absolute; height: 2px; border-radius: 2px; background: rgba(255,255,255,.75); transform: rotate(-9deg); }
@@ -776,7 +771,6 @@
     .filter-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
     @media (max-width: 960px) {
-      .wrap { width: min(100% - 44px, 760px); }
       .collection-top { align-items: flex-start; flex-direction: column; gap: 18px; }
       .filters { align-self: flex-start; }
       .game-grid, .classic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -805,7 +799,6 @@
       .collection-shell { padding: 25px 16px 18px; border-radius: 25px; }
       .collection-top { margin-bottom: 30px; }
       .collection-title { font-size: 34px; }
-      .collection-lede { max-width: 33ch; font-size: 11px; }
       .filters { gap: 3px; max-width: 100%; padding: 4px; }
       .filter-button { min-height: 34px; padding-inline: 10px; font-size: 10px; }
       .game-group:not([hidden]) + .game-group { margin-top: 33px; padding-top: 26px; }
@@ -1593,13 +1586,6 @@ function dotSprite(r, col) {
     sx.beginPath(); sx.arc(cx, cy, ir, 0, TAU); sx.fill();
   }
   return spr;
-}
-function dot(ctx, x, y, r, a, col) {
-  const spr = dotSprite(r, col), half = spr.width / 2;
-  ctx.save();
-  ctx.globalAlpha = a;
-  ctx.drawImage(spr, x - half, y - half);
-  ctx.restore();
 }
 // [x, y, radius, kind]  kind 0 = white dot, 1 = tiny dim dot
 const DOTS = [
