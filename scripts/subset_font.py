@@ -18,6 +18,7 @@ Nebulove + Pacifico Local 字体子集化 & 内嵌（移植自 lingyicute/yimine
 """
 import argparse
 import base64
+import html as html_lib
 import io
 import os
 import re
@@ -52,29 +53,37 @@ ASCII = {chr(c) for c in range(32, 127)}
 PUNCT = set("：，。！？；‘’“”（）【】—…·《》×＝÷＋－、")
 
 # 同时吃掉由本脚本生成的注释块，否则每次重跑都会在文件里多插一份注释
-# yimines 原版为固定 Nebulove 前缀，这里扩展为泛化匹配，兼容两种字体
-GEN_COMMENT_RE = r'/\* ===== .*?子集（内嵌，离线可用）=====.*?===== \*/\s*'
+# yimines 原版为固定 Nebulove 前缀，这里扩展为泛化匹配，兼容两种字体；禁止跨越 */ 以免误吞前序注释和样式
+GEN_COMMENT_RE = r'/\* ===== (?:(?!\*/).)*?子集（内嵌，离线可用）=====(?:(?!\*/).)*?===== \*/\s*'
 FONT_FACE_RE = re.compile(r'(?:' + GEN_COMMENT_RE + r')?@font-face\s*\{[^}]*\}', re.S)
+JS_TOKEN_RE = re.compile(
+    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\n]*"""
+)
 
 
 def strip_non_render_text(html):
-    """剔除不会渲染的文字：HTML 注释、<style>、<script> 里的注释。"""
+    """剔除不会渲染的文字：HTML 注释、<style>、<script> 里的注释，并还原 HTML 字符实体。"""
     html = re.sub(r'<!--.*?-->', '', html, flags=re.S)
     html = re.sub(r'<style\b[^>]*>.*?</style>', '', html, flags=re.S | re.I)
 
-    def _js(m):
-        s = re.sub(r'/\*.*?\*/', ' ', m.group(1), flags=re.S)      # 块注释
-        s = re.sub(r'(?m)^[ \t]*//.*$', ' ', s)                    # 行注释
-        return s
+    scripts = []
 
-    return re.sub(r'<script\b[^>]*>(.*?)</script>', _js, html, flags=re.S | re.I)
+    def _stash_js(m):
+        cleaned = JS_TOKEN_RE.sub(lambda tok: tok.group(1) or ' ', m.group(1))
+        scripts.append(cleaned)
+        return ' '
+
+    markup = re.sub(r'<script\b[^>]*>(.*?)</script>', _stash_js, html, flags=re.S | re.I)
+    return html_lib.unescape(markup) + ' ' + ' '.join(scripts)
 
 
 def collect_chars(html, all_text=False, extra=""):
+    # 先移除已生成的 @font-face 与统计注释，保证 --all-text 重跑幂等且不受旧子集注释干扰
+    source = FONT_FACE_RE.sub("", html)
     if all_text:
-        chars = set(html)
+        chars = set(source)
     else:
-        chars = set(strip_non_render_text(html))
+        chars = set(strip_non_render_text(source))
     chars |= ASCII | PUNCT | set(extra)
     chars.discard("\n")
     chars.discard("\r")
@@ -205,10 +214,6 @@ def main():
                 family, len(woff) / 1024, len(woff) / source_size * 100 if source_size else 0, len(covered)))
             if missing:
                 # 与 yimines 一致：报告字体本身不含的字符（将回退到系统字体）
-                # 按 Unicode 排序，便于对比
-                miss_list = " ".join("U+%04X(%s)" % (ord(c), c) if c.isprintable() and ord(c) < 0xFFFF else "U+%04X" % ord(c) for c in sorted(missing))
-                # 但为保持与原版输出精简，额外打印可读字符清单（仅前 100）
-                readable = " ".join(repr(c) for c in sorted(missing)[:20])
                 print("[%s] ⚠️ 字体本身不含这些字符（将回退到系统字体）：%s" % (
                     family, " ".join("U+%04X" % ord(c) for c in sorted(missing))))
                 # 额外提示可读字符，便于调试
