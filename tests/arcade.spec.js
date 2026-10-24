@@ -252,3 +252,86 @@ test('out-of-order sky decoding cannot replace a newer resize snapshot', async (
   await expect(page.locator('#bg-snapshot')).toHaveAttribute('src', newest);
   expect(await page.evaluate(() => skyDecodes.slice(0, -1).every(item => revokedURLs.includes(item.src)))).toBe(true);
 });
+
+test('hero entrance transform does not resize or jump the stage canvas on entry', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/');
+  await expect(page.locator('#loadingOverlay')).toBeEnabled();
+  const before = await page.locator('#c').evaluate(c => c.style.cssText);
+  await page.locator('#loadingOverlay').click();
+  await expect(page.locator('#loadingOverlay')).toHaveCount(0);
+  const after = await page.locator('#c').evaluate(c => c.style.cssText);
+  expect(after).toBe(before);
+});
+
+test('waitForAudio does not abort an already-loading background track', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.abortedLoads = 0;
+    const origLoad = HTMLMediaElement.prototype.load;
+    HTMLMediaElement.prototype.load = function () {
+      if (this.networkState !== HTMLMediaElement.NETWORK_EMPTY) {
+        window.abortedLoads += 1;
+      }
+      return origLoad.call(this);
+    };
+  });
+  await enter(page);
+  expect(await page.evaluate(() => window.abortedLoads)).toBe(0);
+});
+
+test('clicking the speaker after a transient media load error reloads and recovers playback', async ({ page }) => {
+  let failAudio = true;
+  let requests = 0;
+  await page.route('**/assets/background.mp3', (route) => {
+    requests += 1;
+    if (failAudio) return route.abort('failed');
+    return route.continue();
+  });
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = function () {
+      if (this.error) {
+        return Promise.reject(new DOMException('Media error', 'NotSupportedError'));
+      }
+      if (this.readyState >= 2) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const onReady = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new DOMException('Load failed', 'NotSupportedError')); };
+        const cleanup = () => {
+          this.removeEventListener('loadeddata', onReady);
+          this.removeEventListener('error', onError);
+        };
+        this.addEventListener('loadeddata', onReady, { once: true });
+        this.addEventListener('error', onError, { once: true });
+      });
+    };
+  });
+  await enter(page);
+  const button = page.locator('#musicToggle');
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  await expect(button).toHaveAttribute('aria-label', /重试|再试/);
+  const failedRequests = requests;
+  failAudio = false;
+  await button.click();
+  await expect.poll(() => page.locator('#ambience').evaluate(a => a.readyState)).toBeGreaterThanOrEqual(2);
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await expect(button).toHaveAttribute('aria-label', '关闭背景音乐');
+  expect(requests).toBeGreaterThan(failedRequests);
+});
+
+test('snapshot fallback after an earlier success revokes the stale snapshot URL', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.revokedURLs = [];
+    const revoke = URL.revokeObjectURL.bind(URL);
+    URL.revokeObjectURL = url => { revokedURLs.push(url); revoke(url); };
+  });
+  await enter(page);
+  await expect(page.locator('#bg-snapshot')).toBeVisible();
+  const staleURL = await page.locator('#bg-snapshot').getAttribute('src');
+  await page.evaluate(() => {
+    HTMLCanvasElement.prototype.toBlob = function (cb) { cb(null); };
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('#bg')).toBeVisible();
+  await expect(page.locator('#bg-snapshot')).toHaveCount(0);
+  expect(await page.evaluate(url => revokedURLs.includes(url), staleURL)).toBe(true);
+});

@@ -7,7 +7,7 @@ const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
 const script = html.match(/<script>\s*(\(function \(root\)[\s\S]*?)<\/script>/)[1];
 const scene = script.slice(0, script.indexOf('\n(function(){')).replace(
   'root.Scene = {',
-  'root.Scene = { test: { bakedSprite, bunnyEarArt, chickBodyArt, getState: () => [NOSQ, BODY_SHADOW_SCALE] },'
+  'root.Scene = { test: { bakedSprite, bunnyEarArt, chickBodyArt, cache: CACHE, getState: () => [NOSQ, BODY_SHADOW_SCALE] },'
 );
 
 test.beforeEach(async ({ page }) => {
@@ -77,4 +77,32 @@ test('all sampled animation paint stays inside the declared crop bounds', async 
     return outside;
   });
   expect(outside).toBe(0);
+});
+
+test('cached character and prop sprites keep a transparent 1px border across densities', async ({ page }) => {
+  const clipped = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Scene.W;
+    canvas.height = Scene.H;
+    const ctx = canvas.getContext('2d');
+    const bad = [];
+    for (const scale of [0.5, 1, 2]) {
+      Scene.setSpriteScale(scale);
+      for (let f = 0; f < 201; f += 5) Scene.draw(ctx, f / Scene.FPS);
+      for (const [key, entry] of Object.entries(Scene.test.cache)) {
+        const { width, height } = entry.c;
+        const { data } = entry.c.getContext('2d').getImageData(0, 0, width, height);
+        let edgeAlpha = 0;
+        for (let x = 0; x < width; x++) {
+          edgeAlpha = Math.max(edgeAlpha, data[x * 4 + 3], data[((height - 1) * width + x) * 4 + 3]);
+        }
+        for (let y = 0; y < height; y++) {
+          edgeAlpha = Math.max(edgeAlpha, data[y * width * 4 + 3], data[(y * width + width - 1) * 4 + 3]);
+        }
+        if (edgeAlpha > 0) bad.push({ scale, key, edgeAlpha });
+      }
+    }
+    return bad;
+  });
+  expect(clipped).toEqual([]);
 });
