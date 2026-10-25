@@ -1,7 +1,27 @@
 const { test, expect } = require('@playwright/test');
+const { execFileSync } = require('node:child_process');
+const path = require('node:path');
+
+// 裸写即彩色 emoji 的码位；↗ ↑ → ↓ ✦ ✧ ✹ 是「文字默认呈现」，不属于这一组。
+const SUBSET_CODEPOINTS = ['U+1F319', 'U+1F33F', 'U+1F34A', 'U+1F34B', 'U+1F353', 'U+1F984'];
+// 只按粗区间收集 emoji 会把这些文字符号一起塞进子集，导致 ↗ 之类被画成彩色 emoji 方块。
+const TEXT_PRESENTATION = ['↑', '→', '↓', '↗', '✦', '✧', '✹'];
 
 // 页面里出现的 emoji（与 index.html 中 .match-board / .pair-stage 的内容保持一致）
 const EMOJI = ['🍋', '🌙', '🍓', '🦄', '🌿', '🍊'];
+
+test('子集只收「裸写即彩色 emoji」的码位，文字符号不得纳入（回归：↗ 曾被画成彩色 emoji）', () => {
+  // 服务端码位表不依赖完整字体，也不联网，可以直接跑脚本来验证。
+  const out = execFileSync('python3', [path.join(__dirname, '..', 'scripts', 'subset_emoji.py'), '--dry-run-chars'], {
+    encoding: 'utf8',
+  });
+  const kept = out.split('\n').filter(line => line.startsWith('  U+')).map(line => line.trim().split(' ')[0]);
+  expect(kept).toEqual(SUBSET_CODEPOINTS);
+  for (const symbol of TEXT_PRESENTATION) {
+    expect(out).toContain(symbol);
+  }
+  expect(out).toContain('跳过');
+});
 
 test('emoji 由内嵌的 Yomi UI Emoji 子集接管，且不产生外部字体请求', async ({ page }, testInfo) => {
   const fontRequests = [];
@@ -64,6 +84,10 @@ test('emoji 由内嵌的 Yomi UI Emoji 子集接管，且不产生外部字体�
       };
       expect(await familiesOf('.match-board span')).toEqual(['SamsungColorEmoji:true']);
       expect(await familiesOf('#hero-title')).not.toContain('SamsungColorEmoji:true');
+      // 卡片角上的 ↗ 必须继续由文字字体绘制，不能被 emoji 子集接管
+      for (const selector of ['.launch-dot', '.button-arrow']) {
+        expect(await familiesOf(selector)).not.toContain('SamsungColorEmoji:true');
+      }
     }
   } else {
     // Firefox 不支持 CBDT/CBLC 位图字体（"no supported glyph data table(s) present"），

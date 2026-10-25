@@ -9,6 +9,11 @@ Yomi UI Emoji 的「按页子集化 & 内嵌」
   python3 scripts/subset_emoji.py --check          # 只报告体积，不写文件
   python3 scripts/subset_emoji.py --dry-run-chars  # 只列出页面用到、参与子集的码位
   python3 scripts/subset_emoji.py --extra-chars glyphs.txt  # 追加码位/字符
+  python3 scripts/subset_emoji.py --exclude "↗↑"             # 强制排除（与 --extra-chars 相反）
+
+  ★ 只收「裸写就是彩色 emoji」的码位（Emoji_Presentation=Yes）。
+    ↗ U+2197 / ↑ U+2191 / ❤ U+2764 / ☀ U+2600 这类是「文字默认呈现」，页面上裸写时应由文字字体绘制；
+    若页面写成「字符 + U+FE0F」才会被当成 emoji 收进来。详见 EMOJI_PRESENTATION 注释。
 
 说明：
   - 字体来自 lingyicute/Yomi-Android 的 assets/Yomi-UI-Emoji.ttf（Samsung Color Emoji 改版，CBDT/CBLC 位图）
@@ -52,9 +57,9 @@ GEN_COMMENT_RE = r'/\* ===== (?:(?!\*/).)*?子集（内嵌，离线可用）====
 FONT_FACE_RE = re.compile(r'(?:' + GEN_COMMENT_RE + r')?@font-face\s*\{[^}]*\}', re.S)
 FAMILY_RE = re.compile(r'font-family\s*:\s*["\']?([^"\';}]+?)["\']?\s*;')
 
-# emoji 相关码位区间（Emoji 属性的粗粒度覆盖；命中与否最终还要看字体 cmap）
+# Emoji 属性的粗粒度预筛（Emoji=Yes 的区间，含「文字默认呈现」的符号）
 EMOJI_RANGES = (
-    (0x2190, 0x21FF),   # 箭头
+    (0x2190, 0x21FF),   # 箭头（默认文字呈现，需 U+FE0F 才是彩色）
     (0x2300, 0x23FF),   # ⌚ ⏰ ⏳ …
     (0x2460, 0x24FF),   # ① 类圈号
     (0x25A0, 0x27BF),   # 几何图形 / 杂项符号 / Dingbats（✦ ✧ ✹ ✅ ❤ …）
@@ -66,8 +71,98 @@ EMOJI_RANGES = (
     (0x1F000, 0x1FAFF),  # 主体 emoji 区
     (0x1F1E6, 0x1F1FF),  # 区域指示符（国旗）
 )
-# 组成 emoji 序列必需的控制字符
-EMOJI_JOINERS = "\ufe0f\u200d\u20e3"
+
+# Emoji_Presentation=Yes 的码位（Unicode 18.0.0 emoji-data.txt，已归并为连续区间）。
+# 关键区别：这些码位「裸写就按彩色 emoji 呈现」；而 ↗ U+2197、↑ U+2191、❤ U+2764、☀ U+2600 之类
+# 属于文字默认呈现（Emoji_Presentation=No），必须显式写成「字符 + U+FE0F」才是 emoji 版本。
+# 只按粗区间收集会把 ↗ 一并塞进子集，于是 .launch-dot 里的小箭头被换成彩色方块 emoji —— 所以要按此表判定。
+EMOJI_PRESENTATION = (
+    (0x231A, 0x231B),
+    (0x23E9, 0x23EC),
+    (0x23F0, 0x23F0),
+    (0x23F3, 0x23F3),
+    (0x25FD, 0x25FE),
+    (0x2614, 0x2615),
+    (0x2648, 0x2653),
+    (0x267F, 0x267F),
+    (0x2693, 0x2693),
+    (0x26A1, 0x26A1),
+    (0x26AA, 0x26AB),
+    (0x26BD, 0x26BE),
+    (0x26C4, 0x26C5),
+    (0x26CE, 0x26CE),
+    (0x26D4, 0x26D4),
+    (0x26EA, 0x26EA),
+    (0x26F2, 0x26F3),
+    (0x26F5, 0x26F5),
+    (0x26FA, 0x26FA),
+    (0x26FD, 0x26FD),
+    (0x2705, 0x2705),
+    (0x270A, 0x270B),
+    (0x2728, 0x2728),
+    (0x274C, 0x274C),
+    (0x274E, 0x274E),
+    (0x2753, 0x2755),
+    (0x2757, 0x2757),
+    (0x2795, 0x2797),
+    (0x27B0, 0x27B0),
+    (0x27BF, 0x27BF),
+    (0x2B1B, 0x2B1C),
+    (0x2B50, 0x2B50),
+    (0x2B55, 0x2B55),
+    (0x1F004, 0x1F004),
+    (0x1F0CF, 0x1F0CF),
+    (0x1F18E, 0x1F18E),
+    (0x1F191, 0x1F19A),
+    (0x1F1E6, 0x1F1FF),
+    (0x1F201, 0x1F201),
+    (0x1F21A, 0x1F21A),
+    (0x1F22F, 0x1F22F),
+    (0x1F232, 0x1F236),
+    (0x1F238, 0x1F23A),
+    (0x1F250, 0x1F251),
+    (0x1F300, 0x1F320),
+    (0x1F32D, 0x1F335),
+    (0x1F337, 0x1F37C),
+    (0x1F37E, 0x1F393),
+    (0x1F3A0, 0x1F3CA),
+    (0x1F3CF, 0x1F3D3),
+    (0x1F3E0, 0x1F3F0),
+    (0x1F3F4, 0x1F3F4),
+    (0x1F3F8, 0x1F43E),
+    (0x1F440, 0x1F440),
+    (0x1F442, 0x1F4FC),
+    (0x1F4FF, 0x1F53D),
+    (0x1F54B, 0x1F54E),
+    (0x1F550, 0x1F567),
+    (0x1F57A, 0x1F57A),
+    (0x1F595, 0x1F596),
+    (0x1F5A4, 0x1F5A4),
+    (0x1F5FB, 0x1F64F),
+    (0x1F680, 0x1F6C5),
+    (0x1F6CC, 0x1F6CC),
+    (0x1F6D0, 0x1F6D2),
+    (0x1F6D5, 0x1F6D9),
+    (0x1F6DC, 0x1F6DF),
+    (0x1F6EB, 0x1F6EC),
+    (0x1F6F4, 0x1F6FC),
+    (0x1F7E0, 0x1F7EB),
+    (0x1F7F0, 0x1F7F0),
+    (0x1F90C, 0x1F93A),
+    (0x1F93C, 0x1F945),
+    (0x1F947, 0x1F9FF),
+    (0x1FA70, 0x1FA7C),
+    (0x1FA80, 0x1FAC6),
+    (0x1FAC8, 0x1FAC8),
+    (0x1FACC, 0x1FADD),
+    (0x1FADF, 0x1FAEB),
+    (0x1FAEF, 0x1FAFA),
+)
+
+VS16 = "\ufe0f"
+ZWJ = "\u200d"
+# 组成 emoji 序列必需的控制字符（按需保留，见 collect_emoji_chars）
+EMOJI_JOINERS = set(VS16 + ZWJ + "\u20e3")
 
 
 def strip_generated(html):
@@ -75,18 +170,48 @@ def strip_generated(html):
     return FONT_FACE_RE.sub("", html)
 
 
+def in_ranges(cp, ranges):
+    return any(lo <= cp <= hi for lo, hi in ranges)
+
+
 def is_emoji_codepoint(ch):
-    cp = ord(ch)
-    return any(lo <= cp <= hi for lo, hi in EMOJI_RANGES)
+    return in_ranges(ord(ch), EMOJI_RANGES)
 
 
-def collect_emoji_chars(html):
-    """收集页面中出现的 emoji 码位（连同 ZWJ / VS16 / keycap）。"""
+def is_emoji_presentation(ch):
+    return in_ranges(ord(ch), EMOJI_PRESENTATION)
+
+
+def collect_emoji_chars(html, excluded=frozenset()):
+    """收集页面中「确实按 emoji 呈现」的码位。
+
+    规则（与浏览器 / UTS#51 的呈现规则一致）：
+      1. Emoji_Presentation=Yes 的字符 → 裸写即 emoji，收；
+      2. 文字默认呈现的符号（↗ ↑ ❤ ☀ …）→ 只有页面写成「字符 + U+FE0F」才收，并同时收 VS16；
+      3. ZWJ / keycap 只有在真的组成序列时才收，避免无谓字形。
+
+    返回 (chars, skipped)：chars 为保留集合，skipped 为按规则 2 被排除的文字呈现符号。
+    """
     src = html_lib.unescape(strip_generated(html))
-    chars = {ch for ch in src if is_emoji_codepoint(ch)}
-    if chars:
-        chars |= set(EMOJI_JOINERS)
-    return chars
+    chars, skipped = set(), set()
+    for i, ch in enumerate(src):
+        if ch in EMOJI_JOINERS or not is_emoji_codepoint(ch):
+            continue
+        if is_emoji_presentation(ch):
+            chars.add(ch)
+            if i + 1 < len(src) and src[i + 1] == VS16:
+                chars.add(VS16)
+        elif i + 1 < len(src) and src[i + 1] == VS16:
+            chars.update((ch, VS16))
+        else:
+            skipped.add(ch)
+    # ZWJ 序列（如 👩‍💻）：只有它两侧都有被保留的 emoji 时才需要
+    if ZWJ in src:
+        for i, ch in enumerate(src):
+            if ch == ZWJ and (src[i - 1] in chars or src[i + 1] in chars):
+                chars.add(ZWJ)
+                break
+    return chars - set(excluded), skipped
 
 
 def collect_all_chars(font_path):
@@ -167,6 +292,7 @@ def main():
     ap.add_argument("--ttf", help="完整字体路径（默认 assets/Yomi-UI-Emoji.ttf，缺失则远程下载）")
     ap.add_argument("--font-url", default=REMOTE_FONT, help="远程兜底字体 URL")
     ap.add_argument("--extra-chars", help="追加字符（或 U+XXXX 码位）所在的文本文件")
+    ap.add_argument("--exclude", default="", help="强制排除的字符或 U+XXXX 码位（逗号/空格分隔）")
     ap.add_argument("--check", action="store_true", help="只报告，不写入")
     ap.add_argument("--dry-run-chars", action="store_true", help="只列出命中子集的码位")
     args = ap.parse_args()
@@ -184,26 +310,43 @@ def main():
     for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", extra):
         extra_chars.add(chr(int(m.group(1), 16)))
 
+    excluded = set()
+    for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", args.exclude):
+        excluded.add(chr(int(m.group(1), 16)))
+    excluded |= {ch for ch in args.exclude if not ch.isspace() and ch not in ",，"}
+
+    # 先定码位表：--dry-run-chars 只依赖页面文本，不需要完整字体（也就不用下载）
+    chars, skipped = set(), set()
+    if args.variant != "full":
+        chars, skipped = collect_emoji_chars(html, excluded)
+        chars |= extra_chars - excluded
+        if skipped:
+            print("跳过 %d 个「文字默认呈现」的符号（裸写不算 emoji，交给文字字体绘制）：%s" % (
+                len(skipped), " ".join(sorted(skipped))))
+
+    if not chars and args.variant != "full":
+        sys.exit("页面里没有找到任何 emoji 码位；可用 --extra-chars 手动指定。")
+
+    if args.dry_run_chars:
+        if args.variant == "full":
+            with tempfile.TemporaryDirectory(prefix="gamesarcade-emoji-") as drydir:
+                ttf, _ = resolve_font(args, drydir)
+                chars = collect_all_chars(ttf) - excluded
+        print("参与子集的 %d 个码位：" % len(chars))
+        for line in describe(chars):
+            print("  " + line)
+        return
+
     with tempfile.TemporaryDirectory(prefix="gamesarcade-emoji-") as tmpdir:
         ttf, label = resolve_font(args, tmpdir)
         source_size = os.path.getsize(ttf)
         print("完整字体：%.1f MB（%s）" % (source_size / 1048576, label))
 
         if args.variant == "full":
-            chars = collect_all_chars(ttf)
+            chars = collect_all_chars(ttf) - excluded
             mode = "全量"
         else:
-            chars = collect_emoji_chars(html) | extra_chars
             mode = "按页"
-
-        if not chars:
-            sys.exit("页面里没有找到任何 emoji 码位；可用 --extra-chars 手动指定。")
-
-        if args.dry_run_chars:
-            print("参与子集的 %d 个码位：" % len(chars))
-            for line in describe(chars):
-                print("  " + line)
-            return
 
         print("\n需要保留的码位：%d 个（%s）" % (len(chars), mode))
         for line in describe(chars):
