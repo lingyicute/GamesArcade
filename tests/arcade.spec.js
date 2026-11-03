@@ -214,8 +214,11 @@ test('pagehide and pageshow handlers pause and resume animation', async ({ page 
     Scene.draw = (...args) => { drawCount++; return draw(...args); };
   });
   await expect.poll(() => page.evaluate(() => drawCount)).toBeGreaterThan(2);
-  // Exercise the handlers, not a real BFCache navigation.
-  await page.evaluate(() => dispatchEvent(new Event('pagehide')));
+  // Exercise the handlers, not a real BFCache navigation. A pending resize timer must also be cancelled.
+  await page.evaluate(() => {
+    dispatchEvent(new Event('resize'));
+    dispatchEvent(new Event('pagehide'));
+  });
   const paused = await page.evaluate(() => drawCount);
   await page.waitForTimeout(150);
   expect(await page.evaluate(() => drawCount)).toBe(paused);
@@ -362,17 +365,21 @@ test('external pause and play events keep the music control and mute state in sy
   expect(await page.locator('#ambience').evaluate(audio => audio.muted)).toBe(false);
 });
 
-test('muting while play() is pending keeps audio muted even if play fires before settling', async ({ page }) => {
+test('muting while play() is pending keeps audio muted even if play fires before or after settling', async ({ page }) => {
   await deferPlayback(page);
   await enter(page);
   const button = page.locator('#musicToggle');
   await button.click(); // mute while playAttempts[0] is still pending
   await expect(button).toHaveAttribute('aria-pressed', 'false');
-  await page.evaluate(() => {
-    const audio = document.getElementById('ambience');
-    audio.dispatchEvent(new Event('play'));
+  await page.evaluate(async () => {
     playAttempts[0].resolve();
+    await Promise.resolve();
+    document.getElementById('ambience').dispatchEvent(new Event('play'));
   });
   await expect(button).toHaveAttribute('aria-pressed', 'false');
   expect(await page.locator('#ambience').evaluate(audio => audio.muted)).toBe(true);
+  // Once the stale pending play event is absorbed, a later external play event can still unmute.
+  await page.locator('#ambience').evaluate(audio => audio.dispatchEvent(new Event('play')));
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.locator('#ambience').evaluate(audio => audio.muted)).toBe(false);
 });
