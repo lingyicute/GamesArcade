@@ -336,3 +336,18 @@ test('snapshot fallback after an earlier success revokes the stale snapshot URL'
   await expect(page.locator('#bg-snapshot')).toHaveCount(0);
   expect(await page.evaluate(url => revokedURLs.includes(url), staleURL)).toBe(true);
 });
+
+test('external pause and play events keep the music control and mute state in sync', async ({ page }) => {
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = () => Promise.resolve();
+  });
+  await enter(page);
+  const button = page.locator('#musicToggle');
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#ambience').evaluate(audio => audio.dispatchEvent(new Event('pause')));
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  expect(await page.locator('#ambience').evaluate(audio => audio.muted)).toBe(true);
+  await page.locator('#ambience').evaluate(audio => audio.dispatchEvent(new Event('play')));
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.locator('#ambience').evaluate(audio => audio.muted)).toBe(false);
+});
