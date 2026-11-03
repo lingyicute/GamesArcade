@@ -361,3 +361,18 @@ test('external pause and play events keep the music control and mute state in sy
   await expect(button).toHaveAttribute('aria-pressed', 'true');
   expect(await page.locator('#ambience').evaluate(audio => audio.muted)).toBe(false);
 });
+
+test('muting while play() is pending keeps audio muted even if play fires before settling', async ({ page }) => {
+  await deferPlayback(page);
+  await enter(page);
+  const button = page.locator('#musicToggle');
+  await button.click(); // mute while playAttempts[0] is still pending
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  await page.evaluate(() => {
+    const audio = document.getElementById('ambience');
+    audio.dispatchEvent(new Event('play'));
+    playAttempts[0].resolve();
+  });
+  await expect(button).toHaveAttribute('aria-pressed', 'false');
+  expect(await page.locator('#ambience').evaluate(audio => audio.muted)).toBe(true);
+});
