@@ -22,9 +22,10 @@ test('without JavaScript the catalog and navigation remain usable', async ({ bro
   await page.goto('http://127.0.0.1:8000/');
   await expect(page.locator('#loadingOverlay')).toBeHidden();
   await expect(page.locator('[inert]')).toHaveCount(0);
-  // 13 cards: 11 Material You + 2 classic remakes, as the nav, filter buttons and
+  // 15 cards: 11 Material You + 4 classic remakes, as the nav, filter buttons and
   // group headings declare. Without JavaScript nothing is hidden, so all of them show.
-  await expect(page.locator('.game-card:visible')).toHaveCount(13);
+  await expect(page.locator('.site-nav .nav-count')).toHaveText('15');
+  await expect(page.locator('.game-card:visible')).toHaveCount(15);
   await expect(page.locator('.filters')).toBeHidden();
   await expect(page.locator('#musicToggle')).toBeHidden();
   await page.locator('.button-primary').click();
@@ -53,7 +54,7 @@ test('filtering keeps counts, groups and accessible button states consistent', a
       })),
     };
   });
-  expect(declared.total).toBe(13); // 11 Material You + 2 classic remakes.
+  expect(declared.total).toBe(15); // 11 Material You + 4 classic remakes.
   expect(declared.perFilter.all).toBe(declared.total);
   expect(declared.perFilter.material + declared.perFilter.classic).toBe(declared.total);
   for (const group of declared.perGroup) {
