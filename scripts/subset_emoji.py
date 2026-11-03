@@ -166,7 +166,7 @@ KEYCAP_BASES = set("0123456789#*")
 # 组成 emoji 序列必需的控制字符（按需保留，见 collect_emoji_chars）
 EMOJI_JOINERS = set(VS16 + ZWJ + KEYCAP)
 JS_TOKEN_RE = re.compile(
-    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\n]*"""
+    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\r\n]*|(?:(?<=[(,=:\[!&|?{};+\-*%~^<>])|(?<=^))\s*/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\r\n])*\]|[^/\\\r\n])+/[dgimsuvy]*"""
 )
 
 
@@ -240,10 +240,10 @@ def collect_emoji_chars(html, excluded=frozenset()):
             chars.update((ch, VS16))
         else:
             skipped.add(ch)
-    # ZWJ 序列（如 👩‍💻）：只有它邻接被保留的 emoji 码位时才需要
+    # ZWJ 序列（如 👩‍💻）：只有它两侧均连接被保留的 emoji 码位时才需要
     if ZWJ in src and ZWJ not in excluded:
         for i, ch in enumerate(src):
-            if ch == ZWJ and ((i > 0 and src[i - 1] in chars) or (i + 1 < n and src[i + 1] in chars)):
+            if ch == ZWJ and i > 0 and i + 1 < n and src[i - 1] in chars and src[i + 1] in chars:
                 chars.add(ZWJ)
                 break
     return chars - excluded, skipped
@@ -336,21 +336,28 @@ def main():
         sys.exit("找不到页面文件：%s" % args.html)
     with open(args.html, encoding="utf-8") as f:
         html = f.read()
+    if not args.dry_run_chars and not args.check and not FONT_FACE_RE.search(html):
+        sys.exit("页面里没有找到任何 @font-face 块，无法定位插入点。")
+
+    excluded = set()
+    for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", args.exclude):
+        cp = int(m.group(1), 16)
+        if cp <= 0x10FFFF:
+            excluded.add(chr(cp))
+    exclude_rest = re.sub(r"U\+[0-9A-Fa-f]{2,6}", "", args.exclude)
+    excluded |= {ch for ch in exclude_rest if not ch.isspace() and ch not in ",，"}
 
     extra = ""
     if args.extra_chars:
         with open(args.extra_chars, encoding="utf-8") as f:
             extra = f.read()
     extra_rest = re.sub(r"U\+[0-9A-Fa-f]{2,6}", "", extra)
-    extra_chars = {ch for ch in extra_rest if is_emoji_codepoint(ch)}
+    extra_chars, _ = collect_emoji_chars(extra_rest, excluded)
+    extra_chars |= {ch for ch in extra_rest if is_emoji_codepoint(ch)}
     for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", extra):
-        extra_chars.add(chr(int(m.group(1), 16)))
-
-    excluded = set()
-    for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", args.exclude):
-        excluded.add(chr(int(m.group(1), 16)))
-    exclude_rest = re.sub(r"U\+[0-9A-Fa-f]{2,6}", "", args.exclude)
-    excluded |= {ch for ch in exclude_rest if not ch.isspace() and ch not in ",，"}
+        cp = int(m.group(1), 16)
+        if cp <= 0x10FFFF:
+            extra_chars.add(chr(cp))
 
     # 先定码位表：--dry-run-chars 只依赖页面文本，不需要完整字体（也就不用下载）
     chars, skipped = set(), set()
