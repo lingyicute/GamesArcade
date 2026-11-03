@@ -54,8 +54,8 @@ test('baked shadows scale with device density and restore rendering state on fai
   expect(result.after).toEqual(result.before);
 });
 
-test('all sampled animation paint stays inside the declared crop bounds', async ({ page }) => {
-  const outside = await page.evaluate(() => {
+test('all sampled animation paint stays inside tightly fitted crop bounds', async ({ page }) => {
+  const result = await page.evaluate(() => {
     const b = Scene.animationBounds, scale = 0.25, pad = 80;
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil((b.x1 - b.x0 + pad * 2) * scale);
@@ -67,16 +67,27 @@ test('all sampled animation paint stays inside the declared crop bounds', async 
     // the independent 118-frame shooting-star cycle; sample both half-frames.
     for (let f = 0; f <= 201; f += 0.5) Scene.draw(ctx, f / Scene.FPS);
     const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    let outside = 0;
+    let outside = 0, minX = canvas.width, minY = canvas.height, maxX = -1, maxY = -1;
     const margin = pad * scale;
     for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
-      if (x < margin || y < margin || x >= canvas.width - margin || y >= canvas.height - margin) {
-        if (data[(y * canvas.width + x) * 4 + 3] > 0) outside++;
+      if (data[(y * canvas.width + x) * 4 + 3] > 0) {
+        if (x < margin || y < margin || x >= canvas.width - margin || y >= canvas.height - margin) outside++;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
       }
     }
-    return outside;
+    return {
+      outside,
+      slack: [
+        minX / scale - pad,
+        minY / scale - pad,
+        (canvas.width - 1 - maxX) / scale - pad,
+        (canvas.height - 1 - maxY) / scale - pad
+      ]
+    };
   });
-  expect(outside).toBe(0);
+  expect(result.outside).toBe(0);
+  for (const side of result.slack) expect(side).toBeLessThanOrEqual(16);
 });
 
 test('cached character and prop sprites keep a transparent 1px border across densities', async ({ page }) => {
