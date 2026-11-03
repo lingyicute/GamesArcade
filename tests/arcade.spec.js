@@ -71,6 +71,16 @@ test('filtering keeps counts, groups and accessible button states consistent', a
     await expect(page.locator('[data-filter][aria-pressed="true"]')).toHaveCount(1);
     await expect(page.locator('#filterStatus')).toContainText(`${count} 款游戏`);
   }
+
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 800 });
+    const fits = await page.evaluate(() => {
+      const scene = document.querySelector('.win95-scene').getBoundingClientRect();
+      const win = document.querySelector('.win95-window').getBoundingClientRect();
+      return win.top >= scene.top && win.bottom <= scene.bottom && win.left >= scene.left && win.right <= scene.right;
+    });
+    expect(fits).toBe(true);
+  }
   expect(errors).toEqual([]);
 });
 

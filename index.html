@@ -276,8 +276,7 @@
     .loading-overlay:focus-visible { outline-offset: -8px; }
     .speaker-icon { display: block; width: 21px; height: 21px; overflow: visible; }
     .speaker-body { fill: currentColor; }
-    .speaker-wave, .speaker-mute { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    .speaker-wave, .speaker-mute { display: none; }
+    .speaker-wave, .speaker-mute { display: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     .music-button:not(.is-on) .speaker-mute { display: block; }
     .music-button.is-on .speaker-wave { display: block; }
     .music-button.is-on { border-color: rgba(255, 227, 139, .56); background: rgba(255, 224, 139, .16); }
@@ -634,7 +633,7 @@
     .match-board span:nth-child(2n) { transform: translateY(-3px); }
     .match-board span:nth-child(3n) { background: rgba(255,243,202,.88); }
     .mini-caption { position: absolute; right: 16px; bottom: 13px; z-index: 4; color: rgba(255,255,255,.72); font-size: 8px; font-weight: 700; letter-spacing: .16em; }
-    .mine-board { width: 125px; height: 92px; gap: 5px; transform: rotate(4deg); }
+    .mine-board { height: 92px; transform: rotate(4deg); }
     .mine-board span { border-radius: 7px; font-family: var(--page-font); font-size: 16px; font-weight: 900; }
     .mine-board .covered { background: linear-gradient(145deg, rgba(255,255,255,.55), rgba(248,226,193,.74)); }
     .mine-board .n1 { color: #4788dc; }
@@ -648,7 +647,7 @@
     .memory-card:nth-child(2) { transform: rotate(-3deg) translateY(-7px); }
     .memory-card:nth-child(3) { transform: rotate(7deg) translateY(3px); }
     .memory-card:nth-child(4) { transform: rotate(14deg) translateY(-4px); }
-    .number-board { width: 116px; height: 116px; aspect-ratio: 1 / 1; grid-template-rows: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 5px; border: 1px solid rgba(255,255,255,.55); border-radius: 12px; background: rgba(250,236,208,.62); transform: rotate(4deg); }
+    .number-board { width: 116px; height: 116px; grid-template-rows: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 5px; border: 1px solid rgba(255,255,255,.55); border-radius: 12px; background: rgba(250,236,208,.62); transform: rotate(4deg); }
     .number-board span { min-width: 0; min-height: 0; border-radius: 5px; border: 0; color: #6c5441; background: rgba(255,255,255,.43); font-family: var(--page-font); font-size: 12px; font-weight: 900; line-height: 1; }
     .number-board .tile-2 { background: #fff6e8; }
     .number-board .tile-4 { background: #f6ddae; }
@@ -728,7 +727,7 @@
     .win95-scene { position: absolute; z-index: 1; inset: 0; overflow: hidden; background: linear-gradient(150deg, #34978d, #1b6975); }
     .win95-scene::before { position: absolute; inset: 0; content: ""; opacity: .16; background-image: radial-gradient(rgba(255,255,255,.7) .6px, transparent .7px); background-size: 7px 7px; }
     .win95-window {
-      position: absolute; z-index: 2; top: 26px; left: 50%; width: 141px; padding: 5px;
+      position: absolute; z-index: 2; top: 24px; left: 50%; width: 141px; padding: 4px;
       transform: translateX(-50%) rotate(-3deg);
       border: 2px solid; border-color: #f6f6f6 #4b4b4b #4b4b4b #f6f6f6;
       background: #c0c0c0; box-shadow: 0 12px 20px rgba(9,39,48,.34);
@@ -736,7 +735,7 @@
     .win95-title { display: flex; height: 15px; align-items: center; justify-content: space-between; padding: 0 2px 0 5px; color: #fff; background: linear-gradient(90deg, #08145c, #2f5db0); font-size: 8px; letter-spacing: .04em; }
     .win95-controls { display: flex; gap: 2px; }
     .win95-controls i { display: grid; width: 11px; height: 10px; place-items: center; border: 1px solid; border-color: #fff #555 #555 #fff; color: #111; background: #c0c0c0; font-size: 7px; font-style: normal; line-height: 1; }
-    .win95-bar { display: flex; align-items: center; justify-content: space-between; margin: 5px 0; padding: 3px 5px; border: 2px solid; border-color: #6b6b6b #fff #fff #6b6b6b; }
+    .win95-bar { display: flex; align-items: center; justify-content: space-between; margin: 4px 0; padding: 2px 5px; border: 2px solid; border-color: #6b6b6b #fff #fff #6b6b6b; }
     .win95-led { padding: 2px 3px; color: #ff3535; background: #250b0b; font-family: "Courier New", monospace; font-size: 11px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 0 5px rgba(255,53,53,.85); }
     .win95-face { position: relative; width: 18px; height: 18px; border: 2px solid; border-color: #fff #6b6b6b #6b6b6b #fff; border-radius: 50%; background: #ffdf52; }
     .win95-face::before { position: absolute; top: 4px; left: 3px; width: 2px; height: 2px; content: ""; border-radius: 50%; background: #3b2a00; box-shadow: 6px 0 #3b2a00; }
@@ -835,7 +834,7 @@
       .site-nav { display: none; }
       .music-button { width: 39px; height: 39px; }
       .speaker-icon { width: 19px; height: 19px; }
-      .hero { min-height: 100svh; min-height: 100dvh; padding-inline: 19px; }
+      .hero { padding-inline: 19px; }
       .hero-copy { padding-top: clamp(103px, 16vh, 132px); }
       .eyebrow { gap: 7px; font-size: 8px; letter-spacing: .18em; }
       .hero h1 { max-width: 560px; margin: 18px auto 13px; font-size: clamp(42px, 11.8vw, 58px); line-height: 1.27; letter-spacing: .015em; }
@@ -887,7 +886,7 @@
   <canvas id="bg" aria-hidden="true"></canvas>
   <canvas id="c" aria-hidden="true"></canvas>
 
-  <button class="loading-overlay is-loading" id="loadingOverlay" type="button" hidden disabled aria-live="polite" aria-label="正在载入页面资源">
+  <button class="loading-overlay" id="loadingOverlay" type="button" hidden disabled aria-live="polite" aria-label="正在载入页面资源">
     <span class="loading-spinner" aria-hidden="true"></span>
     <span class="loading-prompt">请轻点任意位置</span>
   </button>
@@ -1408,7 +1407,6 @@
         if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
         resourcesReady = true;
         loadingOverlay.disabled = false;
-        loadingOverlay.classList.remove("is-loading");
         loadingOverlay.classList.add("is-ready");
         loadingOverlay.setAttribute("aria-label", "请轻点任意位置以开始并播放背景音乐");
       });
