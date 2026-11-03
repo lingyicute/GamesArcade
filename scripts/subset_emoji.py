@@ -55,7 +55,7 @@ VARIANTS = {
 # 与 subset_font.py 保持一致的「生成块」注释标记，两个脚本可以互相识别、重复运行幂等
 GEN_COMMENT_RE = r'/\* ===== (?:(?!\*/).)*?子集（内嵌，离线可用）=====(?:(?!\*/).)*?===== \*/\s*'
 FONT_FACE_RE = re.compile(r'(?:' + GEN_COMMENT_RE + r')?@font-face\s*\{[^}]*\}', re.S)
-FAMILY_RE = re.compile(r'font-family\s*:\s*["\']?([^"\';}]+?)["\']?\s*;')
+FAMILY_RE = re.compile(r'font-family\s*:\s*["\']?([^"\';}]+?)["\']?\s*(?:;|\s*(?=\}))')
 
 # Emoji 属性的粗粒度预筛（Emoji=Yes 的区间，含「文字默认呈现」的符号）
 EMOJI_RANGES = (
@@ -166,7 +166,7 @@ KEYCAP_BASES = set("0123456789#*")
 # 组成 emoji 序列必需的控制字符（按需保留，见 collect_emoji_chars）
 EMOJI_JOINERS = set(VS16 + ZWJ + KEYCAP)
 JS_TOKEN_RE = re.compile(
-    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\r\n]*|(?:(?<=[(,=:\[!&|?{};+\-*%~^<>])|(?<=^))\s*/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\r\n])*\]|[^/\\\r\n])+/[dgimsuvy]*"""
+    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\r\n]*|(?:(?<=[(,=:\[!&|?{};+\-*%~^<>])|(?<=\breturn)|(?<=\bcase)|(?<=\bthrow)|(?<=\btypeof)|(?<=\bvoid)|(?<=\bdelete)|(?<=\bawait)|(?<=\byield)|(?<=^))\s*/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\r\n])*\]|[^/\\\r\n])+/[dgimsuvy]*"""
 )
 
 
@@ -178,7 +178,7 @@ def strip_generated(html):
 def strip_non_render_text(html):
     """剔除不会渲染的文字：HTML 注释、<style>、<script> 里的注释，并还原 HTML 字符实体。"""
     html = re.sub(r"<!--.*?-->", "", html, flags=re.S)
-    html = re.sub(r"<style\b[^>]*>.*?</style>", "", html, flags=re.S | re.I)
+    html = re.sub(r"<style\b[^>]*>.*?</style\s*>", "", html, flags=re.S | re.I)
 
     scripts = []
 
@@ -187,7 +187,7 @@ def strip_non_render_text(html):
         scripts.append(cleaned)
         return " "
 
-    markup = re.sub(r"<script\b[^>]*>(.*?)</script>", _stash_js, html, flags=re.S | re.I)
+    markup = re.sub(r"<script\b[^>]*>(.*?)</script\s*>", _stash_js, html, flags=re.S | re.I)
     return html_lib.unescape(markup) + " " + " ".join(scripts)
 
 
@@ -240,13 +240,17 @@ def collect_emoji_chars(html, excluded=frozenset()):
             chars.update((ch, VS16))
         else:
             skipped.add(ch)
-    # ZWJ 序列（如 👩‍💻）：只有它两侧均连接被保留的 emoji 码位时才需要
+    # ZWJ 序列（如 👩‍💻 / ❤️‍🔥）：只有它两侧均连接被保留的 emoji 码位时才需要
     if ZWJ in src and ZWJ not in excluded:
         for i, ch in enumerate(src):
-            if ch == ZWJ and i > 0 and i + 1 < n and src[i - 1] in chars and src[i + 1] in chars:
+            if ch != ZWJ or i == 0 or i + 1 >= n:
+                continue
+            left = src[i - 2] if i >= 2 and src[i - 1] == VS16 else src[i - 1]
+            if (left in chars or src[i - 1] in chars) and src[i + 1] in chars:
                 chars.add(ZWJ)
                 break
-    return chars - excluded, skipped
+    kept = chars - excluded
+    return kept, skipped - kept
 
 
 def collect_all_chars(font_path):
@@ -342,13 +346,15 @@ def main():
     excluded = set()
     for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", args.exclude):
         cp = int(m.group(1), 16)
-        if cp <= 0x10FFFF:
+        if 0 < cp <= 0x10FFFF and not (0xD800 <= cp <= 0xDFFF):
             excluded.add(chr(cp))
     exclude_rest = re.sub(r"U\+[0-9A-Fa-f]{2,6}", "", args.exclude)
     excluded |= {ch for ch in exclude_rest if not ch.isspace() and ch not in ",，"}
 
     extra = ""
     if args.extra_chars:
+        if not os.path.exists(args.extra_chars):
+            sys.exit("找不到文件：%s（--extra-chars）" % args.extra_chars)
         with open(args.extra_chars, encoding="utf-8") as f:
             extra = f.read()
     extra_rest = re.sub(r"U\+[0-9A-Fa-f]{2,6}", "", extra)
@@ -356,7 +362,7 @@ def main():
     extra_chars |= {ch for ch in extra_rest if is_emoji_codepoint(ch)}
     for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", extra):
         cp = int(m.group(1), 16)
-        if cp <= 0x10FFFF:
+        if 0 < cp <= 0x10FFFF and not (0xD800 <= cp <= 0xDFFF):
             extra_chars.add(chr(cp))
 
     # 先定码位表：--dry-run-chars 只依赖页面文本，不需要完整字体（也就不用下载）
@@ -364,6 +370,7 @@ def main():
     if args.variant != "full":
         chars, skipped = collect_emoji_chars(html, excluded)
         chars |= extra_chars - excluded
+        skipped -= chars
         if skipped:
             print("跳过 %d 个「文字默认呈现」的符号（裸写不算 emoji，交给文字字体绘制）：%s" % (
                 len(skipped), " ".join(sorted(skipped))))
@@ -399,7 +406,7 @@ def main():
         woff, covered = build_subset(chars, ttf)
         missing = {c for c in chars if ord(c) not in covered}
         print("\n子集：%.1f KB woff2（%.2f%% 于原字体），码位：%d 个" % (
-            len(woff) / 1024, len(woff) / source_size * 100, len(covered)))
+            len(woff) / 1024, len(woff) / source_size * 100 if source_size else 0, len(covered)))
         if missing:
             print("⚠️ 字体本身不含这些字符（会回退到系统 emoji 字体，属正常现象）：%s" % (
                 " ".join("U+%04X(%s)" % (ord(c), c) for c in sorted(missing))))

@@ -56,15 +56,16 @@ PUNCT = set("：，。！？；‘’“”（）【】—…·《》×＝÷＋�
 # yimines 原版为固定 Nebulove 前缀，这里扩展为泛化匹配，兼容两种字体；禁止跨越 */ 以免误吞前序注释和样式
 GEN_COMMENT_RE = r'/\* ===== (?:(?!\*/).)*?子集（内嵌，离线可用）=====(?:(?!\*/).)*?===== \*/\s*'
 FONT_FACE_RE = re.compile(r'(?:' + GEN_COMMENT_RE + r')?@font-face\s*\{[^}]*\}', re.S)
+FAMILY_RE = re.compile(r'font-family\s*:\s*["\']?([^"\';}]+?)["\']?\s*(?:;|\s*(?=\}))')
 JS_TOKEN_RE = re.compile(
-    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\r\n]*|(?:(?<=[(,=:\[!&|?{};+\-*%~^<>])|(?<=^))\s*/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\r\n])*\]|[^/\\\r\n])+/[dgimsuvy]*"""
+    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\r\n]*|(?:(?<=[(,=:\[!&|?{};+\-*%~^<>])|(?<=\breturn)|(?<=\bcase)|(?<=\bthrow)|(?<=\btypeof)|(?<=\bvoid)|(?<=\bdelete)|(?<=\bawait)|(?<=\byield)|(?<=^))\s*/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\r\n])*\]|[^/\\\r\n])+/[dgimsuvy]*"""
 )
 
 
 def strip_non_render_text(html):
     """剔除不会渲染的文字：HTML 注释、<style>、<script> 里的注释，并还原 HTML 字符实体。"""
     html = re.sub(r'<!--.*?-->', '', html, flags=re.S)
-    html = re.sub(r'<style\b[^>]*>.*?</style>', '', html, flags=re.S | re.I)
+    html = re.sub(r'<style\b[^>]*>.*?</style\s*>', '', html, flags=re.S | re.I)
 
     scripts = []
 
@@ -73,7 +74,7 @@ def strip_non_render_text(html):
         scripts.append(cleaned)
         return ' '
 
-    markup = re.sub(r'<script\b[^>]*>(.*?)</script>', _stash_js, html, flags=re.S | re.I)
+    markup = re.sub(r'<script\b[^>]*>(.*?)</script\s*>', _stash_js, html, flags=re.S | re.I)
     return html_lib.unescape(markup) + ' ' + ' '.join(scripts)
 
 
@@ -180,6 +181,8 @@ def main():
 
     extra = ""
     if args.extra_chars:
+        if not os.path.exists(args.extra_chars):
+            sys.exit("找不到文件：%s（--extra-chars）" % args.extra_chars)
         with open(args.extra_chars, encoding="utf-8") as f:
             extra = f.read()
 
@@ -191,10 +194,10 @@ def main():
     # 仅处理页面中实际出现的字体族，避免对不存在的字体报错（如 yimines 的单字体测试页）
     present_families = set()
     for m in FONT_FACE_RE.finditer(html):
-        fam_m = re.search(r'font-family\s*:\s*["\']?([^\"\'\};]+)["\']?\s*;', m.group(0))
+        fam_m = FAMILY_RE.search(m.group(0))
         if fam_m:
             present_families.add(fam_m.group(1).strip().strip('"').strip("'"))
-    active_configs = [c for c in FONT_CONFIGS if c["family"] in present_families] if present_families else FONT_CONFIGS
+    active_configs = [c for c in FONT_CONFIGS if c["family"] in present_families]
     if not active_configs:
         sys.exit("页面里没有找到可处理的 @font-face 块（Nebulove / Pacifico Local）。")
     if len(active_configs) != len(FONT_CONFIGS):
@@ -259,11 +262,9 @@ def main():
         def repl(m):
             block = m.group(0)
             # 提取 family
-            fam_m = re.search(r'font-family\s*:\s*["\']?([^\"\'\};]+)["\']?\s*;', block)
+            fam_m = FAMILY_RE.search(block)
             if fam_m:
-                fam = fam_m.group(1).strip()
-                # 兼容引号内外空格
-                fam = fam.strip('"').strip("'")
+                fam = fam_m.group(1).strip().strip('"').strip("'")
                 if fam in new_faces:
                     replaced[0] += 1
                     return new_faces[fam]
