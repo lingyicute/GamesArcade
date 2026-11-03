@@ -1304,7 +1304,13 @@
         // Keep play() directly inside the user's gesture for autoplay policies.
         try {
           const playback = audio.play();
-          if (playback && typeof playback.catch === "function") playback.catch(fail);
+          if (playback && typeof playback.then === "function") {
+            playback.then(() => {
+              if (generation !== playbackGeneration && audio.muted && !audio.paused) audio.pause();
+            }, fail);
+          } else if (playback && typeof playback.catch === "function") {
+            playback.catch(fail);
+          }
         } catch (error) { fail(); }
       }
       audio.addEventListener("error", () => {
@@ -1318,9 +1324,10 @@
         }
       });
       audio.addEventListener("play", () => {
-        if (experienceStarted && !audio.muted) reflectMuted(false);
+        if (experienceStarted && !audio.error) reflectMuted(false);
       });
 
+      let cleanupAudioWait = () => {};
       function waitForAudio() {
         return new Promise((resolve) => {
           const isFullyBuffered = () => {
@@ -1349,6 +1356,7 @@
           audio.addEventListener("emptied", fail);
           // <audio preload="auto"> already starts fetching at parse time; calling load()
           // unconditionally would abort an in-flight download and unlock early.
+          cleanupAudioWait = finish;
           if (audio.networkState === HTMLMediaElement.NETWORK_EMPTY) {
             audio.load();
           }
@@ -1373,7 +1381,8 @@
         // unlock before the webfonts are applied, shifting the layout right after entry.
         await Promise.all([
           document.fonts.load('400 16px "Pacifico Local"', "lingyicute").catch(() => {}),
-          document.fonts.load('400 16px "Nebulove"', "星图，数独").catch(() => {})
+          document.fonts.load('400 16px "Nebulove"', "星图，数独").catch(() => {}),
+          document.fonts.load('400 16px "Yomi UI Emoji"', "🍋").catch(() => {})
         ]);
         await document.fonts.ready;
       })();
@@ -1386,12 +1395,15 @@
       // Watchdog: if a resource stalls without ever firing load/error (a hung request),
       // Promise.all would never settle and the overlay would lock the page forever.
       // After 10 s, unlock anyway - playback failures are already handled gracefully.
+      let watchdogTimer = 0;
       const resourcesOrTimeout = Promise.race([
         Promise.all([fontsReady, imagesReady, audioReady, pageLoadReady]),
-        new Promise((resolve) => setTimeout(resolve, 10000))
+        new Promise((resolve) => { watchdogTimer = setTimeout(resolve, 10000); })
       ]);
 
       resourcesOrTimeout.then(async () => {
+        clearTimeout(watchdogTimer);
+        cleanupAudioWait();
         const remaining = minimumSpinnerMs - (performance.now() - loadingStartedAt);
         if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
         resourcesReady = true;
@@ -1413,7 +1425,7 @@
           loadingOverlay.remove();
           document.body.classList.remove("is-loading");
           pageRegions.forEach((region) => region.removeAttribute("inert"));
-          if (transferFocus && document.activeElement === document.body) {
+          if (transferFocus && (!document.activeElement || document.activeElement === document.body || document.activeElement === document.documentElement)) {
             document.querySelector(".brand").focus({ preventScroll: true });
           }
           // Start the canvas only after the expensive full-screen blur is gone.
@@ -1786,7 +1798,7 @@ function mouseSprite() {
   });
 }
 const _mousePos = [0, 0], _mousePA = [0, 0], _mousePB = [0, 0];
-function drawMouse(ctx, p, t) {
+function drawMouse(ctx, p) {
   if (p < 28 || p > 91) return;
   catmull(MPATH, p, _mousePos);
   catmull(MPATH, Math.max(28, p - 0.5), _mousePA);
@@ -2149,7 +2161,7 @@ function moonFaceSprite(blink) {
     });
   });
 }
-function drawMoon(ctx, t, f, e, blink) {
+function drawMoon(ctx, e, blink) {
   /* face: blush + eyes are constant, only the mouth morphs */
   const mf = moonFaceSprite(blink);
   ctx.save();
@@ -2183,7 +2195,6 @@ function zSprite() {
 function drawZ(ctx, x, y, s, rot, a) {
   const z = zSprite();
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s); ctx.globalAlpha = a;
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.drawImage(z.c, z.x, z.y, z.w, z.h);
   ctx.restore();
 }
@@ -2261,7 +2272,7 @@ function draw(ctx, t, view) {
   drawStarsStatic(ctx, t);
   drawShooting(ctx, f);
 
-  drawMouse(ctx, p, t);
+  drawMouse(ctx, p);
   // mouse hiding behind the logo glows through
   if (p > 41 && p < 47.5) {
     catmull(MPATH, p, _mouseGlow);
@@ -2274,9 +2285,9 @@ function draw(ctx, t, view) {
   const moonBlink = (((f - 9) % 201 + 201) % 201) < 6 || (((f - 190) % 201 + 201) % 201) < 5;
   const bunnyBlink = (((f - 172) % 201 + 201) % 201) < 7;
   const chickBlink = (((f - 120) % 201 + 201) % 201) < 5;
-  const pandaBlink = false, purpleBlink = bunnyBlink;
+  const purpleBlink = bunnyBlink;
 
-  drawMoon(ctx, t, f, e, moonBlink);
+  drawMoon(ctx, e, moonBlink);
 
   // chick
   let cp;
@@ -2383,12 +2394,12 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
           bg.hidden=true;
           bg.width=bg.height=1;
         }
-        image.onerror=discard;
         if(image.decode){
           image.src=url;
           image.decode().then(install,discard);
         } else {
           image.onload=install;
+          image.onerror=discard;
           image.src=url;
         }
       },'image/png');
