@@ -728,7 +728,7 @@
     .win95-scene { position: absolute; z-index: 1; inset: 0; overflow: hidden; background: linear-gradient(150deg, #34978d, #1b6975); }
     .win95-scene::before { position: absolute; inset: 0; content: ""; opacity: .16; background-image: radial-gradient(rgba(255,255,255,.7) .6px, transparent .7px); background-size: 7px 7px; }
     .win95-window {
-      position: absolute; z-index: 2; top: 33px; left: 50%; width: 141px; padding: 5px;
+      position: absolute; z-index: 2; top: 26px; left: 50%; width: 141px; padding: 5px;
       transform: translateX(-50%) rotate(-3deg);
       border: 2px solid; border-color: #f6f6f6 #4b4b4b #4b4b4b #f6f6f6;
       background: #c0c0c0; box-shadow: 0 12px 20px rgba(9,39,48,.34);
@@ -745,7 +745,6 @@
     .win95-board .covered { border: 2px solid; border-color: #fff #6b6b6b #6b6b6b #fff; background: #c0c0c0; }
     .win95-board .n1 { color: #0000cc; }
     .win95-board .n2 { color: #007a00; }
-    .win95-board .n3 { color: #cc0000; }
     .win95-board .flag { position: relative; }
     .win95-board .flag::before { position: absolute; top: 2px; left: 5px; width: 8px; height: 6px; content: ""; background: #e33; clip-path: polygon(0 0, 100% 45%, 0 100%); }
     .win95-board .flag::after { position: absolute; top: 2px; left: 4px; width: 1px; height: 9px; content: ""; background: #222; }
@@ -817,7 +816,6 @@
       font-size: 10px;
     }
     .footer-love { color: rgba(239,245,255,.75); }
-    .footer-love .script { margin-left: 4px; color: #ffe49a; font-size: 14px; }
     .footer-top { color: rgba(235,242,255,.67); text-decoration: none; transition: color .2s ease; }
     .footer-top:hover { color: #fff; }
     .filter-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -853,7 +851,7 @@
       .collection-title { font-size: 34px; }
       .filters { gap: 3px; max-width: 100%; padding: 4px; }
       .filter-button { min-height: 34px; padding-inline: 10px; font-size: 10px; }
-      .game-group:not([hidden]) + .game-group { margin-top: 33px; padding-top: 26px; }
+      .game-group:not([hidden]) ~ .game-group:not([hidden]) { margin-top: 33px; padding-top: 26px; }
       .group-heading { gap: 10px; margin-bottom: 14px; }
       .group-number { width: 33px; height: 33px; border-radius: 11px; font-size: 9px; }
       .group-heading h3 { font-size: 19px; }
@@ -1177,7 +1175,7 @@
                   <div class="win95-window">
                     <div class="win95-title"><b>扫雷</b><span class="win95-controls"><i>_</i><i>□</i><i>×</i></span></div>
                     <div class="win95-bar"><span class="win95-led">010</span><span class="win95-face"></span><span class="win95-led">042</span></div>
-                    <div class="win95-board"><span class="covered"></span><span class="covered"></span><span class="n1">1</span><span class=""></span><span class=""></span><span class="n1">1</span><span class="covered"></span><span class="covered"></span><span class="covered"></span><span class="n2">2</span><span class="n2">2</span><span class="n2">2</span><span class="n1">1</span><span class="n2">2</span><span class="covered"></span><span class="covered"></span><span class="covered"></span><span class="n1">1</span><span class="boom">✹</span><span class="n2">2</span><span class="flag"></span><span class="n1">1</span><span class="covered"></span><span class="covered"></span></div>
+                    <div class="win95-board"><span class="covered"></span><span class="covered"></span><span class="n1">1</span><span></span><span></span><span class="n1">1</span><span class="covered"></span><span class="covered"></span><span class="covered"></span><span class="n2">2</span><span class="n2">2</span><span class="n2">2</span><span class="n1">1</span><span class="n2">2</span><span class="covered"></span><span class="covered"></span><span class="covered"></span><span class="n1">1</span><span class="boom">✹</span><span class="n2">2</span><span class="flag"></span><span class="n1">1</span><span class="covered"></span><span class="covered"></span></div>
                   </div>
                 </div>
               </div>
