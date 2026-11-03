@@ -57,7 +57,7 @@ PUNCT = set("：，。！？；‘’“”（）【】—…·《》×＝÷＋�
 GEN_COMMENT_RE = r'/\* ===== (?:(?!\*/).)*?子集（内嵌，离线可用）=====(?:(?!\*/).)*?===== \*/\s*'
 FONT_FACE_RE = re.compile(r'(?:' + GEN_COMMENT_RE + r')?@font-face\s*\{[^}]*\}', re.S)
 JS_TOKEN_RE = re.compile(
-    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\n]*"""
+    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\r\n]*|(?:(?<=[(,=:\[!&|?{};+\-*%~^<>])|(?<=^))\s*/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\r\n])*\]|[^/\\\r\n])+/[dgimsuvy]*"""
 )
 
 
@@ -195,6 +195,8 @@ def main():
         if fam_m:
             present_families.add(fam_m.group(1).strip().strip('"').strip("'"))
     active_configs = [c for c in FONT_CONFIGS if c["family"] in present_families] if present_families else FONT_CONFIGS
+    if not active_configs:
+        sys.exit("页面里没有找到可处理的 @font-face 块（Nebulove / Pacifico Local）。")
     if len(active_configs) != len(FONT_CONFIGS):
         print("检测到页面包含字体：%s（仅处理这些）" % "、".join(c["family"] for c in active_configs))
 

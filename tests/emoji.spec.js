@@ -24,9 +24,11 @@ test('子集只收「裸写即彩色 emoji」的码位，文字符号不得纳�
 
   const edgeCheck = execFileSync('python3', ['-c', String.raw`
 import scripts.subset_emoji as se
-sample = "<!-- 🎮 --><style>/* 🚀 */</style><script>// 🔥\nconst s = \x27🍋\x27;</script>\u200d<p>1\ufe0f\u20e3</p>\u200d"
+sample = "<!-- 🎮 --><style>/* 🚀 */</style><script>const r = s.replace(/[\"\x27]/g, \"\"); // 🔥\nconst s = \x27🍋\x27;</script>\u200d<p>1\ufe0f\u20e3</p>🍋\u200d"
 chars, skipped = se.collect_emoji_chars(sample)
 assert chars == {"🍋", "1", "\ufe0f", "\u20e3"} and not skipped, (chars, skipped)
+zwj_chars, _ = se.collect_emoji_chars("<p>👩\u200d💻</p>")
+assert zwj_chars == {"👩", "\u200d", "💻"}, zwj_chars
 `], { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
   expect(edgeCheck).toBe('');
 });
