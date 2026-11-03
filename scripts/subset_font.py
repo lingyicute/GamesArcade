@@ -251,6 +251,8 @@ def main():
             )
             new_faces[config["family"]] = new_face
 
+        replaced = [0]
+
         # 按 font-family 替换：解析每个匹配块中的 family，取对应 new_face
         def repl(m):
             block = m.group(0)
@@ -261,11 +263,13 @@ def main():
                 # 兼容引号内外空格
                 fam = fam.strip('"').strip("'")
                 if fam in new_faces:
+                    replaced[0] += 1
                     return new_faces[fam]
             # 未识别的 @font-face 保留原样（避免误删第三方字体）
             return block
 
-        new_html, n = FONT_FACE_RE.subn(repl, html)
+        new_html = FONT_FACE_RE.sub(repl, html)
+        n = replaced[0]
 
         if new_html == html:
             print("\n页面已经是目标内容，未改动。")

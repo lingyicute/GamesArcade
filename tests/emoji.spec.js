@@ -5,7 +5,7 @@ const path = require('node:path');
 // 裸写即彩色 emoji 的码位；↗ ↑ → ↓ ✦ ✧ ✹ 是「文字默认呈现」，不属于这一组。
 const SUBSET_CODEPOINTS = ['U+1F319', 'U+1F33F', 'U+1F34A', 'U+1F34B', 'U+1F353', 'U+1F984'];
 // 只按粗区间收集 emoji 会把这些文字符号一起塞进子集，导致 ↗ 之类被画成彩色 emoji 方块。
-const TEXT_PRESENTATION = ['↑', '→', '↓', '↗', '✦', '✧', '✹'];
+const TEXT_PRESENTATION = ['↑', '→', '↓', '↗', '□', '✦', '✧', '✹'];
 
 // 页面里出现的 emoji（与 index.html 中 .match-board / .pair-stage 的内容保持一致）
 const EMOJI = ['🍋', '🌙', '🍓', '🦄', '🌿', '🍊'];
@@ -21,6 +21,14 @@ test('子集只收「裸写即彩色 emoji」的码位，文字符号不得纳�
     expect(out).toContain(symbol);
   }
   expect(out).toContain('跳过');
+
+  const edgeCheck = execFileSync('python3', ['-c', String.raw`
+import scripts.subset_emoji as se
+sample = "<!-- 🎮 --><style>/* 🚀 */</style><script>// 🔥\nconst s = \x27🍋\x27;</script>\u200d<p>1\ufe0f\u20e3</p>\u200d"
+chars, skipped = se.collect_emoji_chars(sample)
+assert chars == {"🍋", "1", "\ufe0f", "\u20e3"} and not skipped, (chars, skipped)
+`], { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
+  expect(edgeCheck).toBe('');
 });
 
 test('emoji 由内嵌的 Yomi UI Emoji 子集接管，且不产生外部字体请求', async ({ page }, testInfo) => {
