@@ -2403,6 +2403,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
   var s=1, ox=0, oy=0, cw=0, ch=0, ax=0, ay=0, aw=1, ah=1, pending=0;
   var lastFit='', rafId=null, running=false, elapsed=0, activeSince=0, lastPaint=-Infinity;
   var ready=!document.body.classList.contains('is-loading'), pageActive=true;
+  var heroSig=document.querySelector('.hero-signature');
   var motion=matchMedia('(prefers-reduced-motion: reduce)');
   var reducedMotion=motion.matches;
   // FPS in Scene is the animation's timebase, not a display-rate target. Preserve
@@ -2475,6 +2476,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
   }
   function fit(){
     if(pending){ clearTimeout(pending); pending=0; }
+    if(!pageActive) return;
     var vw=Math.max(1,innerWidth), vh=Math.max(1,innerHeight);
     var dpr=Math.min(window.devicePixelRatio||1,2);
     var maxPx=6e6, px=vw*vh*dpr*dpr;
@@ -2482,7 +2484,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
     var nextW=Math.round(vw*dpr), nextH=Math.round(vh*dpr);
     // Measure untransformed layout coordinates so .hero-copy's entrance translateY
     // neither triggers redundant full-screen PNG snapshots nor jumps #c after fade-out.
-    var sigBottom=layoutBottom(document.querySelector('.hero-signature'));
+    var sigBottom=layoutBottom(heroSig);
     var maxStageH=sigBottom>0 ? Math.max(1,vh-sigBottom) : vh;
     var nextS=Math.min(nextW/Scene.W,maxStageH*dpr/Scene.H);
     // fonts.ready, resize and orientationchange can all describe the same geometry.
@@ -2510,7 +2512,9 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
     v.x1=Math.ceil((cw-ox)/s+eps); v.y1=Math.ceil((ch-oy)/s+eps);
     Scene.setSpriteScale(s);
     paintStatic();
-    paint(performance.now()); // also paints once while loading / reduced-motion / paused
+    var now=performance.now();
+    paint(now); // also paints once while loading / reduced-motion / paused
+    if(running) lastPaint=now;
   }
   function schedule(){
     if(pending) clearTimeout(pending);
@@ -2567,7 +2571,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
   });
   document.addEventListener('visibilitychange',sync);
   addEventListener('pagehide',function(){ if(pending){ clearTimeout(pending); pending=0; } pageActive=false; sync(); });
-  addEventListener('pageshow',function(){ pageActive=true; fit(); sync(); });
+  addEventListener('pageshow',function(){ if(pageActive) return; pageActive=true; fit(); sync(); });
   function motionChanged(){
     var wasRunning=running;
     sync();
