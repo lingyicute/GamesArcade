@@ -161,13 +161,34 @@ EMOJI_PRESENTATION = (
 
 VS16 = "\ufe0f"
 ZWJ = "\u200d"
+KEYCAP = "\u20e3"
+KEYCAP_BASES = set("0123456789#*")
 # 组成 emoji 序列必需的控制字符（按需保留，见 collect_emoji_chars）
-EMOJI_JOINERS = set(VS16 + ZWJ + "\u20e3")
+EMOJI_JOINERS = set(VS16 + ZWJ + KEYCAP)
+JS_TOKEN_RE = re.compile(
+    r"""(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|/\*[\s\S]*?\*/|//[^\n]*"""
+)
 
 
 def strip_generated(html):
     """去掉所有已生成的 @font-face（base64 巨块），避免把字体二进制当正文统计。"""
     return FONT_FACE_RE.sub("", html)
+
+
+def strip_non_render_text(html):
+    """剔除不会渲染的文字：HTML 注释、<style>、<script> 里的注释，并还原 HTML 字符实体。"""
+    html = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    html = re.sub(r"<style\b[^>]*>.*?</style>", "", html, flags=re.S | re.I)
+
+    scripts = []
+
+    def _stash_js(m):
+        cleaned = JS_TOKEN_RE.sub(lambda tok: tok.group(1) or " ", m.group(1))
+        scripts.append(cleaned)
+        return " "
+
+    markup = re.sub(r"<script\b[^>]*>(.*?)</script>", _stash_js, html, flags=re.S | re.I)
+    return html_lib.unescape(markup) + " " + " ".join(scripts)
 
 
 def in_ranges(cp, ranges):
@@ -192,26 +213,40 @@ def collect_emoji_chars(html, excluded=frozenset()):
 
     返回 (chars, skipped)：chars 为保留集合，skipped 为按规则 2 被排除的文字呈现符号。
     """
-    src = html_lib.unescape(strip_generated(html))
+    excluded = set(excluded)
+    src = strip_non_render_text(strip_generated(html))
     chars, skipped = set(), set()
+    n = len(src)
     for i, ch in enumerate(src):
+        if ch in excluded:
+            continue
+        if ch in KEYCAP_BASES and KEYCAP not in excluded:
+            if i + 1 < n and src[i + 1] == KEYCAP:
+                chars.update((ch, KEYCAP))
+                continue
+            if i + 2 < n and src[i + 1] == VS16 and src[i + 2] == KEYCAP:
+                chars.update((ch, KEYCAP))
+                if VS16 not in excluded:
+                    chars.add(VS16)
+                continue
         if ch in EMOJI_JOINERS or not is_emoji_codepoint(ch):
             continue
+        has_vs16 = i + 1 < n and src[i + 1] == VS16 and VS16 not in excluded
         if is_emoji_presentation(ch):
             chars.add(ch)
-            if i + 1 < len(src) and src[i + 1] == VS16:
+            if has_vs16:
                 chars.add(VS16)
-        elif i + 1 < len(src) and src[i + 1] == VS16:
+        elif has_vs16:
             chars.update((ch, VS16))
         else:
             skipped.add(ch)
-    # ZWJ 序列（如 👩‍💻）：只有它两侧都有被保留的 emoji 时才需要
-    if ZWJ in src:
+    # ZWJ 序列（如 👩‍💻）：只有它邻接被保留的 emoji 码位时才需要
+    if ZWJ in src and ZWJ not in excluded:
         for i, ch in enumerate(src):
-            if ch == ZWJ and (src[i - 1] in chars or src[i + 1] in chars):
+            if ch == ZWJ and ((i > 0 and src[i - 1] in chars) or (i + 1 < n and src[i + 1] in chars)):
                 chars.add(ZWJ)
                 break
-    return chars - set(excluded), skipped
+    return chars - excluded, skipped
 
 
 def collect_all_chars(font_path):
@@ -306,14 +341,16 @@ def main():
     if args.extra_chars:
         with open(args.extra_chars, encoding="utf-8") as f:
             extra = f.read()
-    extra_chars = {ch for ch in extra if is_emoji_codepoint(ch)}
+    extra_rest = re.sub(r"U\+[0-9A-Fa-f]{2,6}", "", extra)
+    extra_chars = {ch for ch in extra_rest if is_emoji_codepoint(ch)}
     for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", extra):
         extra_chars.add(chr(int(m.group(1), 16)))
 
     excluded = set()
     for m in re.finditer(r"U\+([0-9A-Fa-f]{2,6})", args.exclude):
         excluded.add(chr(int(m.group(1), 16)))
-    excluded |= {ch for ch in args.exclude if not ch.isspace() and ch not in ",，"}
+    exclude_rest = re.sub(r"U\+[0-9A-Fa-f]{2,6}", "", args.exclude)
+    excluded |= {ch for ch in exclude_rest if not ch.isspace() and ch not in ",，"}
 
     # 先定码位表：--dry-run-chars 只依赖页面文本，不需要完整字体（也就不用下载）
     chars, skipped = set(), set()
