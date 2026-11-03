@@ -92,7 +92,7 @@
       height: 100dvh;
       pointer-events: none;
     }
-    #bg[hidden], #bg-snapshot[hidden] { display: none; }
+    #bg[hidden] { display: none; }
     /* Only the animation's conservative paint bounds get a backing store.
        fit() sets its CSS rect on the same pixel grid as the full-size backdrop. */
     #c {
@@ -1285,6 +1285,7 @@
       }
       reflectMuted(true); // No playback has been requested before the entry gesture.
       let playbackGeneration = 0;
+      let pendingPlayGeneration = 0;
       function playbackFailed() {
         reflectMuted(true);
         musicButton.setAttribute("aria-label", "音乐暂不可用，点击扬声器重试");
@@ -1292,11 +1293,13 @@
       }
       function requestPlayback() {
         const generation = ++playbackGeneration;
+        pendingPlayGeneration = generation;
         if (audio.error || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
           audio.load();
         }
         reflectMuted(false);
         const fail = () => {
+          if (pendingPlayGeneration === generation) pendingPlayGeneration = 0;
           // An old play() rejection must not override a newer click or retry.
           if (generation === playbackGeneration) playbackFailed();
         };
@@ -1305,25 +1308,34 @@
           const playback = audio.play();
           if (playback && typeof playback.then === "function") {
             playback.then(() => {
+              if (pendingPlayGeneration === generation) pendingPlayGeneration = 0;
               if (generation !== playbackGeneration && audio.muted && !audio.paused) audio.pause();
             }, fail);
-          } else if (playback && typeof playback.catch === "function") {
-            playback.catch(fail);
+          } else {
+            pendingPlayGeneration = 0;
+            if (playback && typeof playback.catch === "function") playback.catch(fail);
           }
         } catch (error) { fail(); }
       }
       audio.addEventListener("error", () => {
         ++playbackGeneration;
+        pendingPlayGeneration = 0;
         playbackFailed();
       });
       audio.addEventListener("pause", () => {
         if (!audio.muted && !audio.ended && !audio.error) {
           ++playbackGeneration;
+          pendingPlayGeneration = 0;
           reflectMuted(true);
         }
       });
       audio.addEventListener("play", () => {
-        if (experienceStarted && !audio.error) reflectMuted(false);
+        if (!experienceStarted || audio.error) return;
+        if (pendingPlayGeneration && pendingPlayGeneration !== playbackGeneration && audio.muted) {
+          if (!audio.paused) audio.pause();
+          return;
+        }
+        reflectMuted(false);
       });
 
       let cleanupAudioWait = () => {};
@@ -1367,8 +1379,13 @@
         if (typeof image.decode === "function") return image.decode().catch(() => {});
         if (image.complete) return Promise.resolve();
         return new Promise((resolve) => {
-          image.addEventListener("load", resolve, { once: true });
-          image.addEventListener("error", resolve, { once: true });
+          const done = () => {
+            image.removeEventListener("load", done);
+            image.removeEventListener("error", done);
+            resolve();
+          };
+          image.addEventListener("load", done);
+          image.addEventListener("error", done);
         });
       }
 
@@ -1387,9 +1404,13 @@
       })();
       const imagesReady = Promise.all([...document.images].map(waitForImage));
       const audioReady = waitForAudio();
+      let cleanupPageLoad = () => {};
       const pageLoadReady = document.readyState === "complete"
         ? Promise.resolve()
-        : new Promise((resolve) => window.addEventListener("load", resolve, { once: true }));
+        : new Promise((resolve) => {
+          cleanupPageLoad = () => window.removeEventListener("load", resolve);
+          window.addEventListener("load", resolve, { once: true });
+        });
 
       // Watchdog: if a resource stalls without ever firing load/error (a hung request),
       // Promise.all would never settle and the overlay would lock the page forever.
@@ -1403,6 +1424,7 @@
       resourcesOrTimeout.then(async () => {
         clearTimeout(watchdogTimer);
         cleanupAudioWait();
+        cleanupPageLoad();
         const remaining = minimumSpinnerMs - (performance.now() - loadingStartedAt);
         if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
         resourcesReady = true;
@@ -1481,10 +1503,6 @@ function rad(ctx, x, y, r0, r1, stops, x1, y1) {
 }
 function local(ctx, ox, oy, fn) { ctx.save(); ctx.translate(ox, oy); ctx.scale(0.5, 0.5); fn(); ctx.restore(); }
 let NOSQ = false, BODY_SHADOW_SCALE = 1;
-function squash(ctx, ax, ay, sx, sy, dy) {
-  if (NOSQ) return;
-  ctx.translate(ax, ay + (dy || 0)); ctx.scale(sx, sy); ctx.translate(-ax, -ay);
-}
 function ell(ctx, x, y, rx, ry, rot) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot || 0, 0, TAU); }
 function body(ctx, pathFn, fill, stroke, lw, glow, blur) {
   ctx.save();
@@ -1721,13 +1739,11 @@ function drawStarsStatic(ctx, t) {
     ctx.drawImage(s.spr, s.x, s.y);
   }
   ctx.restore();
-  ctx.save();
   star5(ctx, 137, 659, 44, -0.18 + 0.05 * Math.sin(t * 1.5), 1, starTwinkle(t, 0, 0.04));
   star5(ctx, 148, 587, 21, 0.25 + 0.06 * Math.sin(t * 1.9), 1, starTwinkle(t, 2, 0.07));
   // (removed) stray gold star sprite that flashed at the top of the frame every
   // 250 frames - not part of the night sky, so it is gone
   star5(ctx, 1675, 194, 12, 0.3, 0.9, starTwinkle(t, 1, 0.15));
-  ctx.restore();
 }
 const SPATH = [[0, 1180], [8, 1049], [12, 999], [16, 901], [18, 878], [20, 760], [22, 744], [28, 627], [36, 480], [44, 350], [47, 330]];
 const _shootP = [0, 0], _shootQ = [0, 0];
@@ -1810,10 +1826,7 @@ function drawMouse(ctx, p) {
 }
 
 /* ---------- characters ---------- */
-function drawPink(ctx, t, i, bob) {
-  ctx.save();
-  const k = 0.014 * Math.sin(t * 2.6 + i);
-  squash(ctx, 520, 628, 1 - k * 0.6, 1 + k, -bob);
+function drawPink(ctx) {
   local(ctx, 420, 260, () => {
     const path = () => {
       ctx.beginPath(); ctx.moveTo(62, 580);
@@ -1841,12 +1854,8 @@ function drawPink(ctx, t, i, bob) {
     ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(258, 470); ctx.lineTo(286, 436); ctx.stroke();
     ctx.fillStyle = rgba(255, 215, 235, 0.9); ell(ctx, 215, 424, 24, 8, -0.1); ctx.fill();
   });
-  ctx.restore();
 }
-function drawBear(ctx, t, i, bob) {
-  ctx.save();
-  const k = 0.012 * Math.sin(t * 2.6 + i);
-  squash(ctx, 700, 585, 1 - k * 0.6, 1 + k, -bob);
+function drawBear(ctx) {
   local(ctx, 420, 260, () => {
     // ears
     body(ctx, () => ell(ctx, 446, 228, 36, 44, -0.5), lin(ctx, 0, 190, 0, 270, [[0, '#f0a73c'], [1, '#d8821e']]), '#f3c545', 4, null, 0);
@@ -1871,7 +1880,6 @@ function drawBear(ctx, t, i, bob) {
     ctx.beginPath(); ctx.moveTo(458, 308); ctx.lineTo(480, 292); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(638, 262); ctx.lineTo(672, 272); ctx.stroke();
   });
-  ctx.restore();
 }
 /* One ear, drawn unrotated about its base, in body-local units.
    The sway used to be baked into the cached bunny sprite (its quantised phase was part
@@ -1951,10 +1959,7 @@ function bunnyBody(ctx, pathFn, lighter) {
   ell(ctx, lighter[0], 640, lighter[2] * 1.1, 70, 0); ctx.fill();
   ctx.restore();
 }
-function drawBunnyL(ctx, t, i, bob, exc, blink, look) {
-  ctx.save();
-  const k = 0.014 * Math.sin(t * 2.6 + i);
-  squash(ctx, 870, 552, 1 - k * 0.6, 1 + k, -bob);
+function drawBunnyL(ctx, exc, blink, look) {
   local(ctx, 760, 240, () => {
     body(ctx, () => ell(ctx, 28, 574, 34, 24, 0.3), '#98e810', '#78c808', 4, null, 0);
     const path = () => {
@@ -1970,7 +1975,6 @@ function drawBunnyL(ctx, t, i, bob, exc, blink, look) {
     eyeBunny(ctx, 340, 302, exc, blink, look);
     bunnyFace(ctx, 266, 326, exc);
   });
-  ctx.restore();
 }
 function bunnyFace(ctx, x, y, exc) {
   ctx.strokeStyle = '#2f8a12'; ctx.lineWidth = 4; ctx.lineCap = 'round';
@@ -1982,10 +1986,7 @@ function bunnyFace(ctx, x, y, exc) {
     ctx.restore();
   }
 }
-function drawBunnyR(ctx, t, i, bob, exc, blink, look) {
-  ctx.save();
-  const k = 0.014 * Math.sin(t * 2.6 + i);
-  squash(ctx, 1050, 552, 1 - k * 0.6, 1 + k, -bob);
+function drawBunnyR(ctx, exc, blink, look) {
   local(ctx, 760, 240, () => {
     body(ctx, () => ell(ctx, 752, 582, 34, 24, -0.3), '#98e810', '#78c808', 4, null, 0);
     const path = () => {
@@ -2001,7 +2002,6 @@ function drawBunnyR(ctx, t, i, bob, exc, blink, look) {
     eyeBunny(ctx, 656, 306, exc, blink, look);
     bunnyFace(ctx, 580, 322, exc);
   });
-  ctx.restore();
 }
 /* The chick is rigid as well: hop position, heading, wing-flap squash and the tuft
    sway are all pure transforms, so the body (two gradients plus a shadowBlur fill) and
@@ -2046,10 +2046,7 @@ function drawChick(ctx, t, x, y, rot, blink, flap) {
   ctx.drawImage(bd.c, bd.x, bd.y, bd.w, bd.h);
   ctx.restore();
 }
-function drawPanda(ctx, t, i, bob) {
-  ctx.save();
-  const k = 0.012 * Math.sin(t * 2.6 + i);
-  squash(ctx, 1225, 575, 1 - k * 0.6, 1 + k, -bob);
+function drawPanda(ctx) {
   local(ctx, 1100, 320, () => {
     const earFill = lin(ctx, 0, 40, 0, 130, [[0, '#e6e6dc'], [1, '#c8c8be']]);
     body(ctx, () => ell(ctx, 208, 84, 42, 30, -0.1), earFill, 'rgba(255,255,255,0.7)', 4, 'rgba(210,225,255,0.7)', 12);
@@ -2079,12 +2076,8 @@ function drawPanda(ctx, t, i, bob) {
     ctx.restore();
     ctx.strokeStyle = '#f4f4f0'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(290, 235, 9, 0.3, 2.2); ctx.stroke();
   });
-  ctx.restore();
 }
-function drawPurple(ctx, t, i, bob, exc, blink) {
-  ctx.save();
-  const k = 0.014 * Math.sin(t * 2.6 + i);
-  squash(ctx, 1325, 618, 1 - k * 0.6, 1 + k, -bob);
+function drawPurple(ctx, exc, blink) {
   local(ctx, 1100, 320, () => {
     const path = () => {
       ctx.beginPath(); ctx.moveTo(330, 462);
@@ -2118,7 +2111,6 @@ function drawPurple(ctx, t, i, bob, exc, blink) {
       ctx.beginPath(); ctx.moveTo(528, 352); ctx.lineTo(540, 360); ctx.lineTo(552, 352); ctx.stroke();
     }
   });
-  ctx.restore();
 }
 
 /* ---------- moon ---------- */
@@ -2202,7 +2194,7 @@ function drawZ(ctx, x, y, s, rot, a) {
    to rebuild all of that as fresh literals (plus the put/bob closures) every frame.
    The painters run only on a cache miss, and squash() is a no-op under NOSQ, so the
    frame state they read (EXPR) never changes the baked art for a given cache key. */
-const EXPR = { t: 0, ex: 0, bb: 0, lk: 0, pb: 0 };
+const EXPR = { ex: 0, bb: 0, lk: 0, pb: 0 };
 /* chick's hop path, [frame, x, y] - constant, so it lives here rather than in draw() */
 const CK = [[0, 995, 345], [36, 995, 345], [40, 940, 268], [44, 892, 205], [48, 874, 186], [51, 874, 176], [53, 900, 235], [55, 960, 320], [57, 996, 352], [59, 996, 347], [61, 995, 347]];
 /* surprise-tick fan angles beside the sleepy cat */
@@ -2215,15 +2207,15 @@ const BR_EARS = { list: BR_EAR_LIST, boxes: BR_EAR_LIST.map(earLocalBox), keys: 
 const PUTS = [
   // Alpha bounds of all three expressions, plus a transparent 2px border for
   // bilinear sampling. In particular, ears no longer belong in the body bitmaps.
-  { key: 'pink',  box: [404, 398, 247, 267], anc: [520, 628],  i: 0, raw: x => drawPink(x, 0, 0, 0) },
-  { key: 'bear',  box: [575, 326, 246, 279], anc: [700, 585],  i: 1, raw: x => drawBear(x, 0, 1, 0) },
+  { key: 'pink',  box: [404, 398, 247, 267], anc: [520, 628],  i: 0, raw: drawPink },
+  { key: 'bear',  box: [575, 326, 246, 279], anc: [700, 585],  i: 1, raw: drawBear },
   { key: 'bl',    box: [750, 336, 243, 241], anc: [870, 552],  i: 2, ears: BL_EARS, expr: 1,
-    raw: x => drawBunnyL(x, EXPR.t, 2, 0, EXPR.ex, EXPR.bb, [-3 * EXPR.lk, -5 * EXPR.lk]) },
+    raw: x => drawBunnyL(x, EXPR.ex, EXPR.bb, [-3 * EXPR.lk, -5 * EXPR.lk]) },
   { key: 'br',    box: [927, 336, 243, 242], anc: [1050, 552], i: 3, ears: BR_EARS, expr: 1,
-    raw: x => drawBunnyR(x, EXPR.t, 3, 0, EXPR.ex, EXPR.bb, [-3 * EXPR.lk, -5 * EXPR.lk]) },
-  { key: 'panda', box: [1110, 327, 248, 270], anc: [1225, 575], i: 4, raw: x => drawPanda(x, 0, 4, 0) },
+    raw: x => drawBunnyR(x, EXPR.ex, EXPR.bb, [-3 * EXPR.lk, -5 * EXPR.lk]) },
+  { key: 'panda', box: [1110, 327, 248, 270], anc: [1225, 575], i: 4, raw: drawPanda },
   { key: 'pur',   box: [1241, 412, 209, 231], anc: [1325, 618], i: 5, expr: 2,
-    raw: x => drawPurple(x, 0, 5, 0, EXPR.ex, EXPR.pb === 1) }
+    raw: x => drawPurple(x, EXPR.ex, EXPR.pb === 1) }
 ];
 /* Blit one cached character. Static art is rasterised once (see sprite()); everything
    here is a transform. Cache keys no longer carry the sway phase: the bunnies' ears are
@@ -2257,10 +2249,10 @@ function put(ctx, t, key, d, bobv) {
 /* bounce when excited */
 function bob(i, t, e) { return e * (6 + 6 * Math.abs(Math.sin(t * 5.2 + i * 0.7))); }
 
-const _mouseGlow = [0, 0], _chickPos = [0, 0];
+const _chickPos = [0, 0];
 
 /* ---------- main ---------- */
-function draw(ctx, t, view) {
+function draw(ctx, t) {
   /* The sky + moon live in the static #bg layer now and are never redrawn here. */
   const f = t * FPS;
   const p = ((f % LOOP) + LOOP) % LOOP;
@@ -2273,10 +2265,9 @@ function draw(ctx, t, view) {
   drawMouse(ctx, p);
   // mouse hiding behind the logo glows through
   if (p > 41 && p < 47.5) {
-    catmull(MPATH, p, _mouseGlow);
     ctx.save(); ctx.globalAlpha = 0.55 * sstep(41, 43, p) * (1 - sstep(45.5, 47.5, p));
-    ctx.fillStyle = rad(ctx, _mouseGlow[0], _mouseGlow[1], 0, 80, [[0, 'rgba(120,255,240,0.9)'], [1, 'rgba(120,255,240,0)']]);
-    ctx.beginPath(); ctx.arc(_mouseGlow[0], _mouseGlow[1], 80, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.fillStyle = rad(ctx, _mousePos[0], _mousePos[1], 0, 80, [[0, 'rgba(120,255,240,0.9)'], [1, 'rgba(120,255,240,0)']]);
+    ctx.beginPath(); ctx.arc(_mousePos[0], _mousePos[1], 80, 0, TAU); ctx.fill(); ctx.restore();
   }
 
   // blinks
@@ -2303,7 +2294,7 @@ function draw(ctx, t, view) {
   const ex = e > 0.5 ? 1 : 0, bb = bunnyBlink && e < 0.1 ? 1 : 0;
   const lk = e > 0.5 ? 0 : 1;
   // painters read EXPR only when a cache key first appears (see PUTS above)
-  EXPR.t = t; EXPR.ex = ex; EXPR.bb = bb; EXPR.lk = lk; EXPR.pb = (purpleBlink && e < 0.1) ? 1 : 0;
+  EXPR.ex = ex; EXPR.bb = bb; EXPR.lk = lk; EXPR.pb = (purpleBlink && e < 0.1) ? 1 : 0;
   for (let n = 0; n < PUTS.length; n++) {
     const d = PUTS[n];
     const key = d.expr === 1 ? d.key + ex + bb + lk
@@ -2324,14 +2315,17 @@ function draw(ctx, t, view) {
       ctx.restore();
     } }
   // Zzz floating from the sleepy pink one
-  const ZP = 2.4;
-  for (let k = 0; k < 3; k++) {
-    const u = ((t / ZP + k / 3) % 1 + 1) % 1;
-    const x = lerp(590, 520, u) - 20 * u * u, y = lerp(398, 322, u);
-    const s = lerp(0.55, 1.15, u);
-    const zw = Math.max(sstep(96, 106, p), (1 - sstep(8, 12, p)) * (p < 50 ? 1 : 0));
-    const a = sstep(0, 0.2, u) * (1 - sstep(0.7, 1, u)) * (1 - e) * zw;
-    if (a > 0.01) drawZ(ctx, x, y, s, -0.15, a);
+  const zw = (1 - e) * Math.max(sstep(96, 106, p), p < 12 ? 1 - sstep(8, 12, p) : 0);
+  if (zw > 0.01) {
+    const ZP = 2.4;
+    for (let k = 0; k < 3; k++) {
+      const u = ((t / ZP + k / 3) % 1 + 1) % 1;
+      const a = sstep(0, 0.2, u) * (1 - sstep(0.7, 1, u)) * zw;
+      if (a > 0.01) {
+        const x = lerp(590, 520, u) - 20 * u * u, y = lerp(398, 322, u);
+        drawZ(ctx, x, y, lerp(0.55, 1.15, u), -0.15, a);
+      }
+    }
   }
 }
 
@@ -2364,28 +2358,21 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
     // Keep the freshly painted canvas visible until encoding AND decoding finish.
     // This is also the fallback if snapshots are unavailable or fail.
     bg.hidden=false;
-    if(skyImage) skyImage.hidden=true;
-    if(!bg.toBlob || !window.URL || !URL.createObjectURL){ releaseSkySnapshot(); return; }
+    releaseSkySnapshot();
+    if(!bg.toBlob || !window.URL || !URL.createObjectURL) return;
     try {
       bg.toBlob(function(blob){
-        if(!blob){
-          if(generation===skyGeneration) releaseSkySnapshot();
-          return;
-        }
-        if(generation!==skyGeneration) return;
+        if(!blob || generation!==skyGeneration) return;
         var url=URL.createObjectURL(blob), image=new Image();
         image.id='bg-snapshot'; image.alt=''; image.setAttribute('aria-hidden','true');
         image.decoding='async';
         function discard(){
           URL.revokeObjectURL(url);
-          if(generation===skyGeneration) releaseSkySnapshot();
         }
         function install(){
           if(generation!==skyGeneration){ URL.revokeObjectURL(url); return; }
-          if(skyImage) skyImage.replaceWith(image);
-          else bg.after(image);
+          bg.after(image);
           skyImage=image;
-          if(skyURL) URL.revokeObjectURL(skyURL);
           skyURL=url;
           // A hidden full-resolution canvas still owns its backing store. Release
           // it only after the decoded image is installed; fit() recreates it later.
@@ -2403,7 +2390,6 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
       },'image/png');
     } catch(error) {
       /* Keep the canvas fallback (e.g. a tainted future asset). */
-      releaseSkySnapshot();
     }
   }
   function layoutBottom(el){
@@ -2419,7 +2405,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
     ctx.setTransform(1,0,0,1,0,0);
     ctx.clearRect(0,0,aw,ah);
     ctx.setTransform(s,0,0,s,ox-ax,oy-ay);
-    Scene.draw(ctx,reducedMotion ? 0 : time(now),Scene.view);
+    Scene.draw(ctx,reducedMotion ? 0 : time(now));
   }
   function paintStatic(){
     // The opaque sky covers every pixel; clearing first is redundant.
@@ -2428,6 +2414,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANI
     snapshotSky();
   }
   function fit(){
+    if(pending){ clearTimeout(pending); pending=0; }
     var vw=Math.max(1,innerWidth), vh=Math.max(1,innerHeight);
     var dpr=Math.min(window.devicePixelRatio||1,2);
     var maxPx=6e6, px=vw*vh*dpr*dpr;
