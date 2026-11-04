@@ -1655,7 +1655,13 @@ function setSpriteScale(ss) {
   const bodySuffix = '@' + Math.min(1, ss);
   for (const k in CACHE) {
     // A body already at its 1x cap also survives changes between larger scales.
-    if (k.indexOf('@') >= 0 && !(k.startsWith('body:') && k.endsWith(bodySuffix))) delete CACHE[k];
+    if (k.indexOf('@') >= 0 && !(k.startsWith('body:') && k.endsWith(bodySuffix))) {
+      // Dropping the JS reference alone leaves the bitmap resident until GC.
+      // Resizing releases the old pixel storage during resize/DPR churn, while
+      // capped body sprites above keep both their canvas and rasterised artwork.
+      CACHE[k].c.width = CACHE[k].c.height = 0;
+      delete CACHE[k];
+    }
   }
   SPRITE_SS.v = ss;
   warmAt = 0;

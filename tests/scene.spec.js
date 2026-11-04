@@ -161,3 +161,73 @@ test('prewarm restarts after a density change and keeps frame state intact', asy
   expect(result.again).toBeGreaterThanOrEqual(result.first);
   expect(result.state).toEqual([false, 1]);
 });
+
+test('density changes release evicted canvas backing stores immediately', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Scene.W; canvas.height = Scene.H;
+    const ctx = canvas.getContext('2d');
+    Scene.setSpriteScale(2);
+    for (let f = 0; f < 201; f += 5) Scene.draw(ctx, f / Scene.FPS);
+    const previous = Object.values(Scene.test.cache).map(entry => entry.c);
+    const before = previous.reduce((sum, c) => sum + c.width * c.height, 0);
+    Scene.setSpriteScale(0.5);
+    return { before, retained: previous.reduce((sum, c) => sum + c.width * c.height, 0), keys: Object.keys(Scene.test.cache) };
+  });
+  expect(result.before).toBeGreaterThan(0);
+  expect(result.retained).toBe(0);
+  expect(result.keys).toEqual([]);
+});
+
+test('body sprites at their density cap survive higher-density changes', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const ctx = document.createElement('canvas').getContext('2d');
+    Scene.setSpriteScale(1);
+    Scene.draw(ctx, 0);
+    const bodies = Object.entries(Scene.test.cache).filter(([key]) => key.startsWith('body:'));
+    const props = Object.entries(Scene.test.cache).filter(([key]) => !key.startsWith('body:'));
+    Scene.setSpriteScale(2);
+    Scene.draw(ctx, 0);
+    return {
+      count: bodies.length,
+      reused: bodies.every(([key, entry]) => Scene.test.cache[key] === entry && entry.c.width > 0 && entry.c.height > 0),
+      released: props.every(([, entry]) => entry.c.width === 0 && entry.c.height === 0)
+    };
+  });
+  expect(result.count).toBe(6);
+  expect(result.reused).toBe(true);
+  expect(result.released).toBe(true);
+});
+
+test('same density buckets and invalid scales preserve warm sprites', async ({ page }) => {
+  const stable = await page.evaluate(() => {
+    const ctx = document.createElement('canvas').getContext('2d');
+    Scene.setSpriteScale(0.61);
+    Scene.draw(ctx, 0);
+    const previous = Object.entries(Scene.test.cache);
+    for (const scale of [0.62, NaN, Infinity, -Infinity]) Scene.setSpriteScale(scale);
+    return previous.length > 0 && previous.every(([key, entry]) => Scene.test.cache[key] === entry && entry.c.width > 0 && entry.c.height > 0);
+  });
+  expect(stable).toBe(true);
+});
+
+test('released sprites rebuild with identical pixels when returning to a density', async ({ page }) => {
+  const changed = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Scene.W; canvas.height = Scene.H;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    Scene.setSpriteScale(0.5);
+    Scene.draw(ctx, 1.5);
+    const before = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    Scene.setSpriteScale(2);
+    Scene.draw(ctx, 1.5);
+    Scene.setSpriteScale(0.5);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    Scene.draw(ctx, 1.5);
+    const after = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let count = 0;
+    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) count++;
+    return count;
+  });
+  expect(changed).toBe(0);
+});
