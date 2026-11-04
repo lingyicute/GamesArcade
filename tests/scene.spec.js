@@ -117,3 +117,47 @@ test('cached character and prop sprites keep a transparent 1px border across den
   });
   expect(clipped).toEqual([]);
 });
+
+test('prewarm bakes every sprite the loop can ask for, at every density', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Scene.W;
+    canvas.height = Scene.H;
+    const ctx = canvas.getContext('2d');
+    const keys = () => Object.keys(Scene.test.cache);
+    const out = [];
+    for (const scale of [0.5, 1, 2]) {
+      Scene.setSpriteScale(scale);
+      let slices = 1;
+      while (Scene.prewarm(0.001) && slices < 500) slices++;
+      const warmed = keys();
+      // two full cycles, frame by frame: every blink window and the excited stretch included
+      for (let f = 0; f < 402; f++) Scene.draw(ctx, f / Scene.FPS);
+      out.push({ scale, slices, late: keys().filter(k => !warmed.includes(k)), more: Scene.prewarm(Infinity) });
+    }
+    return out;
+  });
+  for (const r of result) {
+    expect(r.slices, 'baking is spread over several calls').toBeGreaterThan(5);
+    expect(r.late, 'sprites first baked during the animation at scale ' + r.scale).toEqual([]);
+    expect(r.more).toBe(false);
+  }
+});
+
+test('prewarm restarts after a density change and keeps frame state intact', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const keys = () => Object.keys(Scene.test.cache);
+    Scene.setSpriteScale(1);
+    Scene.prewarm(Infinity);
+    const first = keys().length;
+    Scene.setSpriteScale(1.5);
+    const dropped = keys().length < first;
+    const pending = Scene.prewarm(0.001);
+    Scene.prewarm(Infinity);
+    return { first, dropped, pending, again: keys().length, state: Scene.test.getState() };
+  });
+  expect(result.dropped).toBe(true);
+  expect(result.pending).toBe(true);
+  expect(result.again).toBeGreaterThanOrEqual(result.first);
+  expect(result.state).toEqual([false, 1]);
+});
