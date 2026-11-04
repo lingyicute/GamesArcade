@@ -383,3 +383,29 @@ test('muting while play() is pending keeps audio muted even if play fires before
   await expect(button).toHaveAttribute('aria-pressed', 'true');
   expect(await page.locator('#ambience').evaluate(audio => audio.muted)).toBe(false);
 });
+
+for (const scheduler of ['requestIdleCallback', 'setTimeout fallback']) test(`sprite prewarm runs in slices after a resize and is skipped under reduced motion (${scheduler})`, async ({ page }) => {
+  if (scheduler !== 'requestIdleCallback') await page.addInitScript(() => { delete window.requestIdleCallback; });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await enter(page);
+  await page.evaluate(() => {
+    window.warmCalls = [];
+    const prewarm = Scene.prewarm;
+    Scene.prewarm = budget => { const more = prewarm(budget); warmCalls.push(more); return more; };
+  });
+  await page.setViewportSize({ width: 1100, height: 700 });
+  // slices keep coming until everything is baked, then stop
+  await expect.poll(() => page.evaluate(() => warmCalls.length)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => warmCalls[warmCalls.length - 1])).toBe(false);
+  const settled = await page.evaluate(() => warmCalls.length);
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => warmCalls.length)).toBe(settled);
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect.poll(() => page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
+  await page.waitForTimeout(100);
+  await page.evaluate(() => { warmCalls.length = 0; });
+  await page.setViewportSize({ width: 900, height: 650 });
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => warmCalls.length)).toBe(0);
+});
