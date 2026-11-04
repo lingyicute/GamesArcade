@@ -2562,6 +2562,29 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
     var now=performance.now();
     paint(now); // also paints once while loading / reduced-motion / paused
     if(running) lastPaint=now;
+    queueWarm();
+  }
+  // The mouse, the excited faces and the blinks are baked on first use, i.e. inside an
+  // animation frame. Bake them in idle slices instead (the loading overlay is the ideal
+  // moment); a new density starts over. Reduced motion never shows them, so skip it.
+  var warmCancel=null;
+  function cancelWarm(){ if(warmCancel){ warmCancel(); warmCancel=null; } }
+  function queueWarm(){
+    if(warmCancel || reducedMotion || !pageActive || document.hidden || !Scene.prewarm) return;
+    function run(deadline){
+      warmCancel=null;
+      if(reducedMotion || !pageActive || document.hidden) return;
+      // Leave room for the frame in flight: slices stay within ~6 ms.
+      var left=deadline && deadline.timeRemaining ? deadline.timeRemaining() : 8;
+      if(Scene.prewarm(Math.min(6,Math.max(1,left-2)))) queueWarm();
+    }
+    if(window.requestIdleCallback){
+      var id=requestIdleCallback(run,{timeout:600});
+      warmCancel=function(){ cancelIdleCallback(id); };
+    } else {
+      var timer=setTimeout(run,48);
+      warmCancel=function(){ clearTimeout(timer); };
+    }
   }
   function schedule(){
     if(pending) clearTimeout(pending);
@@ -2590,8 +2613,10 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
     if(shouldRun){
       activeSince=now; lastPaint=-Infinity; running=true;
       rafId=requestAnimationFrame(loop);
+      queueWarm();
     } else {
       elapsed+=Math.max(0,now-activeSince); running=false;
+      cancelWarm();
       if(rafId!==null) cancelAnimationFrame(rafId);
       rafId=null;
     }
