@@ -1611,6 +1611,8 @@ function sprite(key, bx, by, bw, bh, fn) {
    is part of every baked key, and setSpriteScale() drops the previous generation, so
    the cache cannot grow past one generation. */
 const SPRITE_SS = { v: 1 };
+/* prewarm() cursor; every new density is a new generation that has to be baked again */
+let warmList = null, warmAt = 0;
 /* Bake art that lives in its own coordinate system.
      key        cache key
      box        {x, y, w, h} bounding box, in the units the caller blits in
@@ -1656,6 +1658,7 @@ function setSpriteScale(ss) {
     if (k.indexOf('@') >= 0 && !(k.startsWith('body:') && k.endsWith(bodySuffix))) delete CACHE[k];
   }
   SPRITE_SS.v = ss;
+  warmAt = 0;
 }
 
 /* ---------- stars ---------- */
@@ -2269,6 +2272,13 @@ const PUTS = [
   { key: 'pur',   box: [1241, 412, 209, 231], anc: [1325, 618], i: 5, expr: 2,
     raw: x => drawPurple(x, EXPR.ex, EXPR.pb === 1) }
 ];
+/* Cache key of a character's current expression, read from EXPR. */
+function putKey(d) {
+  return d.expr === 1 ? d.key + EXPR.ex + EXPR.bb + EXPR.lk
+       : d.expr === 2 ? d.key + EXPR.ex + EXPR.pb
+       : d.key;
+}
+function bakePut(d) { return sprite(putKey(d), d.box[0], d.box[1], d.box[2], d.box[3], d.raw); }
 /* Blit one cached character. Static art is rasterised once (see sprite()); everything
    here is a transform. Cache keys no longer carry the sway phase: the bunnies' ears are
    separate cached sprites that are rotated at blit time, so a bunny sprite is rebuilt
@@ -2298,6 +2308,46 @@ function put(ctx, t, key, d, bobv) {
 function bob(i, t, e) { return e ? e * (6 + 6 * Math.abs(Math.sin(t * 5.2 + i * 0.7))) : 0; }
 
 const _chickPos = [0, 0];
+
+/* ---------- prewarming ---------- */
+/* Sprites are baked on first use, so the first pass through the 201-frame loop stalled on
+   the frames that introduce new art: the mouse (28), the excited faces (36-41), its glow
+   (41), the chick's blink (120) and the bunnies' blink (172) - each one rasterising shadowBlur
+   bodies inside a single frame - and every density change started over. prewarm() bakes the
+   same set ahead of time in small slices. WARM_STATES are the only (ex, bb, lk, pb) tuples
+   draw() can produce: calm, calm while blinking, and excited (which never blinks). */
+const WARM_STATES = [[0, 0, 1, 0], [0, 1, 1, 1], [1, 0, 0, 0]];
+function warmTasks() {
+  const tasks = [], calm = WARM_STATES[0], blink = WARM_STATES[1], excited = WARM_STATES[2];
+  const warmPut = (d, st) => tasks.push(() => {
+    EXPR.ex = st[0]; EXPR.bb = st[1]; EXPR.lk = st[2]; EXPR.pb = st[3];
+    bakePut(d);
+  });
+  // in the order the loop first reaches them
+  for (const d of PUTS) warmPut(d, calm);
+  for (const d of PUTS) if (d.ears) for (const spec of d.ears.specs) tasks.push(() => earSprite(spec));
+  tasks.push(zSprite, () => chickSprite(false), chickTuftSprite, mouseSprite);
+  for (const d of PUTS) if (d.expr) warmPut(d, excited);
+  tasks.push(mouseGlowSprite, () => chickSprite(true));
+  for (const d of PUTS) if (d.expr) warmPut(d, blink);
+  return tasks;
+}
+/* Bake pending sprites for about budgetMs (at least one per call). Returns true while more
+   remain; Infinity bakes everything at once. Already-cached art costs a lookup. */
+function prewarm(budgetMs) {
+  if (!warmList) warmList = warmTasks();
+  const keep = [EXPR.ex, EXPR.bb, EXPR.lk, EXPR.pb];
+  const clock = typeof performance !== 'undefined' ? performance : Date, t0 = clock.now();
+  try {
+    while (warmAt < warmList.length) {
+      warmList[warmAt++]();
+      if (clock.now() - t0 >= budgetMs) break;
+    }
+  } finally {
+    EXPR.ex = keep[0]; EXPR.bb = keep[1]; EXPR.lk = keep[2]; EXPR.pb = keep[3];
+  }
+  return warmAt < warmList.length;
+}
 
 /* ---------- main ---------- */
 function draw(ctx, t) {
@@ -2349,10 +2399,7 @@ function draw(ctx, t) {
   EXPR.ex = ex; EXPR.bb = bb; EXPR.lk = lk; EXPR.pb = (purpleBlink && e < 0.1) ? 1 : 0;
   for (let n = 0; n < PUTS.length; n++) {
     const d = PUTS[n];
-    const key = d.expr === 1 ? d.key + ex + bb + lk
-              : d.expr === 2 ? d.key + ex + EXPR.pb
-              : d.key;
-    put(ctx, t, key, d, bob(d.i, t, e));
+    put(ctx, t, putKey(d), d, bob(d.i, t, e));
   }
 
   // surprise ticks next to the sleepy cat when the hero moment starts
@@ -2394,7 +2441,7 @@ function draw(ctx, t) {
    rotated 184px aura, the shooting star above y=0, strokes and antialiasing.
    Keep the bounds test in sync when adding/changing animation art. */
 const ANIMATION_BOUNDS = Object.freeze({ x0: -186, y0: -60, x1: 2086, y1: 814 });
-root.Scene = { draw, drawStatic, setSpriteScale, W, H, FPS, animationBounds: ANIMATION_BOUNDS, view: STAGE_VIEW };
+root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBounds: ANIMATION_BOUNDS, view: STAGE_VIEW };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 (function(){
