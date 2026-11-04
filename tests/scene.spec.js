@@ -97,7 +97,10 @@ test('cached character and prop sprites keep a transparent 1px border across den
     canvas.height = Scene.H;
     const ctx = canvas.getContext('2d');
     const bad = [];
-    for (const scale of [0.5, 1, 2]) {
+    // Exercise every 1/8-density bucket, not only the endpoints: outward
+    // rounding and engine-specific stroke AA can expose intermediate edges.
+    for (let bucket = 4; bucket <= 16; bucket++) {
+      const scale = bucket / 8;
       Scene.setSpriteScale(scale);
       for (let f = 0; f < 201; f += 5) Scene.draw(ctx, f / Scene.FPS);
       for (const [key, entry] of Object.entries(Scene.test.cache)) {
