@@ -2508,8 +2508,12 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
     }
     return y;
   }
+  var needsFit=false, needsPaint=false;
+  function canPaint(){ return pageActive && !document.hidden; }
   function time(now){ return (elapsed+(running ? Math.max(0,now-activeSince) : 0))/1000; }
   function paint(now){
+    if(!canPaint()){ needsPaint=true; return; }
+    needsPaint=false;
     ctx.setTransform(1,0,0,1,0,0);
     ctx.clearRect(0,0,aw,ah);
     ctx.setTransform(s,0,0,s,ox-ax,oy-ay);
@@ -2523,7 +2527,10 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
   }
   function fit(){
     if(pending){ clearTimeout(pending); pending=0; }
-    if(!pageActive) return;
+    // Background tabs can receive resize, font and preference events too. Keep
+    // only the latest geometry request; don't measure, rasterise or encode it yet.
+    if(!canPaint()){ needsFit=true; return false; }
+    needsFit=false;
     var vw=Math.max(1,innerWidth), vh=Math.max(1,innerHeight);
     var dpr=Math.min(window.devicePixelRatio||1,2);
     var maxPx=6e6, px=vw*vh*dpr*dpr;
@@ -2537,7 +2544,7 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
     // fonts.ready, resize and orientationchange can all describe the same geometry.
     // Don't reset canvas state/backing stores or invalidate sprites in that case.
     var key=[vw,vh,nextW,nextH,nextS].join('/');
-    if(key===lastFit) return;
+    if(key===lastFit) return false;
     lastFit=key;
     cw=nextW; ch=nextH; s=nextS;
     ox=(cw-Scene.W*s)/2; oy=ch-Scene.H*s;
@@ -2561,8 +2568,9 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
     paintStatic();
     var now=performance.now();
     paint(now); // also paints once while loading / reduced-motion / paused
-    if(running) lastPaint=now;
+    lastPaint=now;
     queueWarm();
+    return true;
   }
   // The mouse, the excited faces and the blinks are baked on first use, i.e. inside an
   // animation frame. Bake them in idle slices instead (the loading overlay is the ideal
@@ -2587,7 +2595,9 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
     }
   }
   function schedule(){
-    if(pending) clearTimeout(pending);
+    needsFit=true;
+    if(pending){ clearTimeout(pending); pending=0; }
+    if(!canPaint()) return;
     pending=setTimeout(function(){ pending=0; fit(); },120);
   }
   function loop(now){
@@ -2606,20 +2616,31 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
   function sync(){
     // Read media state on lifecycle/change events, not during every paint. Apart
     // from avoiding a style query per frame, this leaves change delivery to the UA.
+    if(reducedMotion!==motion.matches) needsPaint=true;
     reducedMotion=motion.matches;
-    var shouldRun=ready && pageActive && !document.hidden && !reducedMotion;
-    if(shouldRun===running) return;
+    var visible=canPaint();
+    if(!visible && pending){ clearTimeout(pending); pending=0; needsFit=true; }
+    var fitted=visible && needsFit && fit();
+    var shouldRun=ready && visible && !reducedMotion;
     var now=performance.now();
-    if(shouldRun){
-      activeSince=now; lastPaint=-Infinity; running=true;
-      rafId=requestAnimationFrame(loop);
-      queueWarm();
-    } else {
-      elapsed+=Math.max(0,now-activeSince); running=false;
-      cancelWarm();
-      if(rafId!==null) cancelAnimationFrame(rafId);
-      rafId=null;
+    if(shouldRun!==running){
+      if(shouldRun){
+        activeSince=now; running=true;
+        // A deferred fit already painted the frozen animation time. Honour its
+        // frame budget instead of drawing it again on the very next rAF.
+        if(!fitted) lastPaint=-Infinity;
+        rafId=requestAnimationFrame(loop);
+        queueWarm();
+      } else {
+        elapsed+=Math.max(0,now-activeSince); running=false;
+        cancelWarm();
+        if(rafId!==null) cancelAnimationFrame(rafId);
+        rafId=null;
+      }
     }
+    if(visible && !running && needsPaint) paint(now);
+    // Still loading: a hidden tab cancelled the idle bake and nothing else restarts it.
+    if(visible && !running && !reducedMotion) queueWarm();
   }
   addEventListener('resize',schedule);
   addEventListener('orientationchange',schedule);
@@ -2637,20 +2658,14 @@ root.Scene = { draw, drawStatic, setSpriteScale, prewarm, W, H, FPS, animationBo
   }
   watchDpr();
   document.addEventListener('arcade:ready',function(){
-    ready=true;
-    fit();
+    ready=true; needsFit=true;
     sync();
   });
   document.addEventListener('visibilitychange',sync);
-  addEventListener('pagehide',function(){ if(pending){ clearTimeout(pending); pending=0; } pageActive=false; sync(); });
-  addEventListener('pageshow',function(){ if(pageActive) return; pageActive=true; fit(); sync(); });
-  function motionChanged(){
-    var wasRunning=running;
-    sync();
-    if(reducedMotion || (!running && !wasRunning && pageActive && !document.hidden)) paint(performance.now());
-  }
-  if(motion.addEventListener) motion.addEventListener('change',motionChanged);
-  else motion.addListener(motionChanged);
+  addEventListener('pagehide',function(){ pageActive=false; sync(); });
+  addEventListener('pageshow',function(){ if(pageActive) return; pageActive=true; needsFit=true; sync(); });
+  if(motion.addEventListener) motion.addEventListener('change',sync);
+  else motion.addListener(sync);
   if(document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
   fit();
   sync();
