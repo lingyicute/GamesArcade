@@ -2028,7 +2028,9 @@ function drawBunnyR(ctx, exc, blink, look) {
    original transform stays a plain scale(), so the flap squash behaves exactly as it
    did; it is just no longer re-rasterised from scratch every frame. */
 const CHICK_BOX = { x: -156, y: -126, w: 298, h: 250 };
-const TUFT_BOX = { x: -24, y: -48, w: 48, h: 72 };
+// At the minimum 0.25px/body-unit density, leave two sampling pixels around
+// the stroked ellipse; Firefox's antialiasing can reach past a one-pixel gutter.
+const TUFT_BOX = { x: -28, y: -52, w: 56, h: 80 };
 function chickBodyArt(ctx, blink) {
   const path = () => {
     ctx.beginPath(); ctx.moveTo(-100, 40);
